@@ -76,6 +76,7 @@ class ChatSession extends EventEmitter {
       const result = await this.rpc.request('turn/start', { threadId: this.thread.id, input, model,
         ...(effort ? { effort } : {}), approvalPolicy: 'on-request', approvalsReviewer: 'user', sandboxPolicy: permissions.policy(this.thread.cwd) }, 120000);
       if (this.running) this.turnId = result.turn?.id || this.turnId;
+      if (!this.thread.preview && text.trim()) this.thread.preview = text.trim().slice(0, 200);
       this.emit('update', { type: 'sent' }); this.state();
       if (this.stopRequested && this.running) await this.stop();
       return result;

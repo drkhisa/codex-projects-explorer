@@ -22,6 +22,7 @@ function createChatPanel(vscode, controller, thread) {
   const post = message => { if (!closed) panel.webview.postMessage(message); };
   const fail = error => post({ type: 'error', message: error.message || String(error), retrying: session.running });
   session.on('update', update => {
+    if (update.type === 'sent') { controller.updateChatTitle(thread); controller.rebuildTree(); }
     if(update.type==='tool' && update.item?.type==='fileChange'){rememberPatch(update.item);controller.files?.refreshChanges();}
     if(update.type==='finished')controller.files?.refreshChanges();
     if (update.type === 'state') controller.setChatRunning?.(thread.id, update.running);

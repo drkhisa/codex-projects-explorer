@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 	<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
 		<Metadata>
-			<Identity Language="en-US" Id="codex-projects-explorer" Version="0.5.4" Publisher="damir-tools" />
+			<Identity Language="en-US" Id="codex-projects-explorer" Version="0.5.5" Publisher="damir-tools" />
 			<DisplayName>Codex Projects Explorer</DisplayName>
 			<Description xml:space="preserve">Проекты Codex и полноценный чат в центральной вкладке: модели, размышления, потоковые ответы и вложения.</Description>
 			<Tags>codex,projects,history,chats</Tags>

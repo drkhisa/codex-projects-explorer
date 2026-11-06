@@ -268,8 +268,11 @@ class Controller {
   }
   updateChatTitle(thread) {
     const session = this.sessions.get(thread.id), panel = this.panels.get(thread.id);
+    const stored = this.threads.find(t => t.id === thread.id);
+    const metadata = { name: thread.name || '', preview: thread.preview || session?.thread.preview || stored?.preview || '' };
+    if (stored) Object.assign(stored, metadata);
     if (!session || !panel) return;
-    Object.assign(session.thread, { name: thread.name || '', preview: thread.preview || '' });
+    Object.assign(session.thread, metadata);
     const title = chatTitle(session.thread);
     if (panel.title !== title) { panel.title = title; panel.webview.postMessage({ type: 'title', title }); }
   }
@@ -496,6 +499,10 @@ class Controller {
       if (this.disposed || backend !== this.backend) return;
       // Notifications received during the request are newer than its snapshot.
       if (revision !== (this.activityRevision || 0)) return;
+      for (const row of threads) {
+        const thread = this.threads.find(t => t.id === row.id);
+        if (thread) this.updateChatTitle({ ...thread, name: row.name || thread.name, preview: row.preview });
+      }
       this.runtimeStates = new Map(threads.map(t=>[t.id,runtimeActivity(t.status)]).filter(([,s])=>s));
       const active = new Set(threads.filter(t => t.status?.type === 'active').map(t => t.id));
       this.reportedActive = active; this.rebuildTree();
@@ -519,6 +526,7 @@ class Controller {
       if (method === 'thread/name/updated') {
         const thread = this.threads.find(t => t.id === p.threadId) || this.sessions.get(p.threadId)?.thread;
         if (thread && (typeof p.threadName === 'string' || p.threadName === null)) {
+          this.activityRevision = (this.activityRevision || 0) + 1;
           thread.name = p.threadName || ''; this.updateChatTitle(thread); this.rebuildTree();
         }
         return;

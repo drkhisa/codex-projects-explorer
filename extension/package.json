@@ -2,7 +2,7 @@
   "name": "codex-projects-explorer",
   "displayName": "Codex Projects Explorer",
   "description": "Проекты Codex и полноценный чат в центральной вкладке: модели, размышления, потоковые ответы и вложения.",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "publisher": "damir-tools",
   "license": "MIT",
   "engines": {

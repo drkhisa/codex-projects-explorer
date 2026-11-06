@@ -7,6 +7,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 const Module = require('node:module');
 const { createChatPanel } = require('../extension/src/chat-panel');
+const { chatTitle } = require('../extension/src/view');
+const { RpcError } = require('../extension/src/rpc');
 
 const vscode = {
   window: { withProgress: async (_, run) => run({ report() {} }, { onCancellationRequested: () => ({ dispose() {} }) }), showErrorMessage: message => assert.fail(message) },
@@ -111,4 +113,112 @@ test('a webview ready event receives a title changed before its listener was rea
   assert.equal(f.panel.title, f.thread.name);
   assert.ok(f.messages.some(message => message.type === 'title' && message.title === f.thread.name));
   f.controller.sessions.get(f.thread.id).dispose();
+});
+
+function sendingPanel({ name = '', rejected = false } = {}) {
+  const f = fixture(), rpc = new EventEmitter();
+  let receive, rebuilds = 0;
+  f.thread.name = name; f.controller.threads[0].name = name;
+  rpc.request = async method => {
+    if (method === 'model/list') return { data: [{ id: 'test-model' }] };
+    if (method === 'thread/loaded/list') return { data: [f.thread.id] };
+    if (method === 'thread/read') return { thread: { ...f.thread, status: { type: 'idle' } } };
+    if (method === 'turn/start') {
+      if (rejected) throw new RpcError('Rejected synthetic send', -32600);
+      return { turn: { id: 'synthetic-turn' } };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  };
+  f.panel.webview.onDidReceiveMessage = handler => { receive = handler; return { dispose() {} }; };
+  f.panel.onDidDispose = () => {};
+  Object.assign(f.controller, {
+    backend: { connect: async () => rpc }, context: { globalState: { get: () => ({}), update: async () => {} } },
+    setChatRunning() {}, getProjectAccess: () => 'project', waitForProjectAccess: async () => {}, rebuildTree: () => { rebuilds++; }
+  });
+  createChatPanel({ window: { createWebviewPanel: (_, title) => { f.panel.title = title; return f.panel; } }, ViewColumn: { Active: 1 } }, f.controller, f.thread);
+  return { ...f, rpc, send: text => receive({ action: 'send', text, model: 'test-model' }), rebuilds: () => rebuilds };
+}
+
+test('sending the first message names both the tree and tab without refresh or rename events', async () => {
+  const f = sendingPanel();
+  try {
+    await f.send('Чё как\nтут');
+    assert.equal(f.panel.title, 'Чё как тут');
+    assert.equal(chatTitle(f.controller.threads[0]), 'Чё как тут');
+    assert.ok(f.messages.some(message => message.type === 'title' && message.title === 'Чё как тут'));
+    assert.ok(f.rebuilds() > 0);
+    f.rpc.emit('notification', { method: 'turn/completed', params: { threadId: f.thread.id, turn: { status: 'completed' } } });
+    await f.send('Следующее сообщение');
+    assert.equal(f.panel.title, 'Чё как тут');
+  } finally { f.controller.sessions.get(f.thread.id).dispose(); }
+});
+
+test('a rejected send does not name the chat', async () => {
+  const f = sendingPanel({ rejected: true });
+  try {
+    await f.send('Не принято');
+    assert.equal(f.panel.title, f.thread.id);
+    assert.equal(f.thread.preview, '');
+    assert.equal(chatTitle(f.controller.threads[0]), f.thread.id);
+    assert.ok(f.messages.some(message => message.type === 'error'));
+  } finally { f.controller.sessions.get(f.thread.id).dispose(); }
+});
+
+test('the first send keeps an explicitly assigned name', async () => {
+  const f = sendingPanel({ name: 'Заданное имя' });
+  try {
+    await f.send('Первое сообщение');
+    assert.equal(f.panel.title, 'Заданное имя');
+    assert.equal(chatTitle(f.controller.threads[0]), 'Заданное имя');
+  } finally { f.controller.sessions.get(f.thread.id).dispose(); }
+});
+
+function pollingController() {
+  const f = fixture(), rpc = new EventEmitter();
+  Object.assign(f.controller, { backend: { rpc }, activityReader: { prune() {} }, localEnds: new Map(), runtimeStates: new Map(), reportedActive: new Set() });
+  f.controller.attachActivityRpc = Controller.prototype.attachActivityRpc;
+  return { ...f, rpc, poll: () => Controller.prototype.refreshActivity.call(f.controller) };
+}
+
+test('background polling adopts metadata without a rename notification', async () => {
+  const f = pollingController();
+  f.rpc.request = async () => ({ data: [{ id: f.thread.id, name: 'Имя с сервера', preview: 'Первое сообщение' }] });
+  await f.poll();
+  assert.equal(f.panel.title, 'Имя с сервера');
+  assert.equal(chatTitle(f.controller.threads[0]), 'Имя с сервера');
+});
+
+test('polling preserves a local assigned name when the server has no name', async () => {
+  const f = pollingController();
+  f.thread.name = f.controller.threads[0].name = 'Сохранённое имя';
+  f.rpc.request = async () => ({ data: [{ id: f.thread.id, name: null, preview: 'Первое сообщение' }] });
+  await f.poll();
+  assert.equal(f.panel.title, 'Сохранённое имя');
+  assert.equal(chatTitle(f.controller.threads[0]), 'Сохранённое имя');
+});
+
+test('empty list snapshots do not erase an accepted first message', async () => {
+  const f = pollingController();
+  f.thread.preview = 'Первое принятое сообщение';
+  f.rpc.request = async () => ({ data: [{ id: f.thread.id, name: '', preview: '' }] });
+  await f.poll();
+  assert.equal(f.panel.title, 'Первое принятое сообщение');
+  assert.equal(chatTitle(f.controller.threads[0]), 'Первое принятое сообщение');
+  f.controller.backend.load = async () => ({ threads: [{ ...f.thread, name: '', preview: '' }], projects: [], diagnostics: { errors: [] } });
+  await f.controller.refresh();
+  assert.equal(f.panel.title, 'Первое принятое сообщение');
+  assert.equal(chatTitle(f.controller.threads[0]), 'Первое принятое сообщение');
+});
+
+test('a late polling response cannot overwrite a newer rename event', async () => {
+  const f = pollingController();
+  let finish, requested;
+  const started = new Promise(resolve => { requested = resolve; });
+  f.rpc.request = () => new Promise(resolve => { finish = resolve; requested(); });
+  const polling = f.poll();
+  await started;
+  f.rpc.emit('notification', { method: 'thread/name/updated', params: { threadId: f.thread.id, threadName: 'Свежее имя' } });
+  finish({ data: [{ id: f.thread.id, name: 'Старое имя', preview: '' }] });
+  await polling;
+  assert.equal(f.panel.title, 'Свежее имя');
 });
