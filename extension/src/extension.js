@@ -318,11 +318,19 @@ class Controller {
     const terminal = vscode.window.createTerminal(launch);
     terminal.show();
   }
-  async openInApp(thread) {
+  async openInApp(thread, draft) {
     if (thread?.provider === 'chatgpt-browser') return this.openOnlineInBrowser(thread);
     if (!validId(thread?.id)) throw new Error('Выберите чат.');
-    const ok = await vscode.env.openExternal(vscode.Uri.parse(`codex://threads/${encodeURIComponent(thread.id)}`));
+    const target = `codex://threads/${encodeURIComponent(thread.id)}`;
+    if (draft !== undefined && (typeof draft !== 'string' || draft.length > 4000000)) throw new Error('Черновик слишком большой для передачи.');
+    const withDraft = draft ? `${target}?prompt=${encodeURIComponent(draft)}` : target;
+    // Windows protocol handlers have short URI limits; clipboard keeps long drafts complete.
+    const clipboard = withDraft.length > 1800;
+    if (clipboard) await vscode.env.clipboard.writeText(draft);
+    const ok = await vscode.env.openExternal(vscode.Uri.parse(clipboard ? target : withDraft));
     if (!ok) throw new Error('Windows не открыл ссылку Codex. Проверьте установку приложения.');
+    if (clipboard) vscode.window.showInformationMessage('Полный черновик скопирован. Вставьте его в открытый чат Codex через Ctrl+V и отправьте.');
+    else if (draft) vscode.window.showInformationMessage('Открыт исходный чат Codex с черновиком. Проверьте его и отправьте в приложении.');
   }
   async openProject(group) {
     if (!group?.paths?.length) throw new Error('У проекта нет доступной рабочей папки.');

@@ -13,6 +13,9 @@ const MAX_FILE_BYTES = 50 * 1024 * 1024, MAX_ATTACHMENTS = 10;
 function fileKind(ext, size) {
   return IMAGES.has(ext) && size <= 10 * 1024 * 1024 ? 'image' : TEXT.has(ext) && size <= 256 * 1024 ? 'text' : 'file';
 }
+function ownerDraft(text, inputs) {
+  return [text, ...inputs.map(item => item.type === 'localImage' ? `Прикреплённое изображение: ${item.path}` : item.text || `Контекст: ${item.path || ''}`)].filter(Boolean).join('\n\n');
+}
 
 function createChatPanel(vscode, controller, thread) {
   const panel = vscode.window.createWebviewPanel('codexProjects.chat', chatTitle(thread), controller.files?.editorColumn || vscode.ViewColumn.Active,
@@ -24,9 +27,12 @@ function createChatPanel(vscode, controller, thread) {
   controller.sessions.set(thread.id, session); controller.panels.set(thread.id, panel);
   let closed = false, booting = false, pasting = false;
   const post = message => { if (!closed) panel.webview.postMessage(message); };
-  const fail = error => post({ type: 'error', message: /already has an active writer/i.test(error.message || '')
-    ? 'Этот чат удерживается другим клиентом Codex. Дождитесь освобождения или продолжите его в исходном клиенте. Текст и вложения сохранены.'
-    : error.message || String(error), retrying: session.running });
+  const fail = error => {
+    const writerConflict = /already has an active writer/i.test(error.message || '');
+    post({ type: 'error', writerConflict, message: writerConflict
+      ? 'Этот чат открыт в другом клиенте Codex. Нажмите «Продолжить в Codex с черновиком», чтобы открыть тот же чат у владельца. Текст и вложения здесь сохранены.'
+      : error.message || String(error), retrying: session.running });
+  };
   session.on('update', update => {
     if (update.type === 'sent') { controller.updateChatTitle(thread); controller.rebuildTree(); }
     if(update.type==='tool' && update.item?.type==='fileChange'){rememberPatch(update.item);controller.files?.refreshChanges();}
@@ -115,7 +121,7 @@ function createChatPanel(vscode, controller, thread) {
       if (!message || typeof message.action !== 'string') return;
       if(message.action==='reviewChange'){const patch=patches.get(message.itemId);if(!patch)throw new Error('Изменения этого ответа недоступны. Обновите историю.');const {ChangesReview}=require('./changes');controller.changes ||= new ChangesReview(vscode);await controller.changes.patch(patch,chatTitle(thread)+' · изменения');return;}
       if (message.action === 'ready' || message.action === 'refresh') await bootstrap();
-      else if (['send', 'steer', 'enqueue'].includes(message.action)) {
+      else if (['send', 'steer', 'enqueue', 'handoff'].includes(message.action)) {
         if (booting || pasting) throw new Error('Дождитесь загрузки истории и вложений.');
         await controller.waitForProjectAccess?.();
         const ids = Array.isArray(message.attachments) ? [...new Set(message.attachments)] : [];
@@ -137,6 +143,11 @@ function createChatPanel(vscode, controller, thread) {
             extraInputs.push({ type: 'text', text: `Прикреплённый файл: [${item.name}](<${item.path}>)\n\n${await fs.readFile(item.path, 'utf8')}` });
           }
         }
+        if (message.action === 'handoff') {
+          if (typeof message.text !== 'string' || message.text.length > 1000000) throw new Error('Некорректный черновик.');
+          await controller.openInApp(thread, ownerDraft(message.text, extraInputs));
+          return;
+        }
         const access = controller.getProjectAccess?.(thread) || 'project';
         const options = { text: message.text, model: message.model, effort: message.effort, access, extraInputs,
           display: { text: message.text, ids, names: selected.map(a => a.name), assets: selected.filter(a => a.preview).map(a => a.preview) } };
@@ -147,7 +158,12 @@ function createChatPanel(vscode, controller, thread) {
           const all = { ...controller.context.globalState.get('chatPreferences', {}), [thread.id]: { model: message.model, effort: message.effort } };
           await controller.context.globalState.update('chatPreferences', all);
         }
-      } else if (message.action === 'removeQueued') session.removeQueued(message.id);
+      } else if (message.action === 'handoffQueued') {
+        const item = session.queue.find(item => item.id === message.id);
+        if (!item?.writerConflict || session.draining) throw new Error('Запрос больше недоступен для передачи.');
+        await controller.openInApp(thread, ownerDraft(item.text, item.extraInputs || []));
+      }
+      else if (message.action === 'removeQueued') session.removeQueued(message.id);
       else if (message.action === 'resumeQueue') session.resumeQueue();
       else if (message.action === 'stop') await session.stop();
       else if (message.action === 'setProjectAccess') {

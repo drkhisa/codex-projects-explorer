@@ -8,7 +8,7 @@ const { renderChatShell } = require('../extension/src/view');
 
 function fixture() {
   const nodes = new Map(), events = new Map(), classes = new Set(), saved = [], posts = [];
-  const document = { body: { classList: { toggle: (name, enabled) => enabled ? classes.add(name) : classes.delete(name) } }, addEventListener() {}, querySelectorAll: () => [],
+  const document = { body: { classList: { toggle: (name, enabled) => enabled ? classes.add(name) : classes.delete(name) } }, createElement: () => ({}), addEventListener() {}, querySelectorAll: () => [],
     getElementById(id) {
       if (!nodes.has(id)) nodes.set(id, { value: '', textContent: '', attributes: new Map(), options: [], add(option) { this.options.push(option); },
         addEventListener: (type, listener) => events.set(id + ':' + type, listener),
@@ -69,4 +69,38 @@ test('while running the editor stays enabled and sends steer or queue without lo
   f.message({ type: 'queued' }); assert.equal(f.input.value, '');
   f.input.value = 'Draft during queue'; f.button.onclick(); f.message({ type: 'sent', source: 'queue' });
   assert.equal(f.input.value, 'Draft during queue'); assert.equal(f.classes.has('composer-expanded'), true);
+});
+
+test('Enter queues, Ctrl+Enter and reported Fn+Enter steer, idle Ctrl+Enter sends', () => {
+  for (const [running, modifiers, expected] of [
+    [true, {}, 'enqueue'], [false, {}, 'enqueue'],
+    [true, { ctrlKey: true }, 'steer'], [false, { ctrlKey: true }, 'send'],
+    [true, { getModifierState: key => key === 'Fn' }, 'steer']
+  ]) {
+    const f = fixture(); f.message({ type: 'models', models: [{ id: 'synthetic' }] }); f.message({ type: 'state', running });
+    let prevented = false;
+    f.events.get('input:keydown')({ key: 'Enter', ...modifiers, preventDefault: () => { prevented = true; } });
+    assert.equal(prevented, true); assert.equal(f.posts.at(-1).action, expected);
+  }
+});
+
+test('Shift+Enter, composing input and held Enter never submit another request', () => {
+  for (const extra of [{ shiftKey: true }, { isComposing: true }, { repeat: true }]) {
+    const f = fixture(); f.message({ type: 'models', models: [{ id: 'synthetic' }] });
+    const before = f.posts.length;
+    f.events.get('input:keydown')({ key: 'Enter', ...extra, preventDefault() {} });
+    assert.equal(f.posts.length, before); assert.ok(f.input.value);
+  }
+});
+
+test('writer conflict exposes an explicit owner handoff and keeps the editor draft', () => {
+  const f = fixture(), text = f.input.value;
+  f.message({ type: 'models', models: [{ id: 'synthetic' }] });
+  f.nodes.get('history').append = () => {};
+  assert.match(renderChatShell({ id: 'synthetic-chat' }), /id="handoff"[^>]*hidden/);
+  f.message({ type: 'error', writerConflict: true, message: 'Synthetic writer conflict' });
+  assert.equal(f.nodes.get('handoff').hidden, false);
+  f.nodes.get('handoff').onclick();
+  assert.equal(f.posts.at(-1).action, 'handoff'); assert.equal(f.posts.at(-1).text, text);
+  assert.equal(f.input.value, text);
 });

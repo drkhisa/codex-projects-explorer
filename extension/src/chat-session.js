@@ -103,7 +103,7 @@ class ChatSession extends EventEmitter {
     this.emit('update', { type: 'sent', source: 'steer', display });
   }
   queueState() {
-    this.emit('update', { type: 'queue', paused: this.queuePaused, items: this.queue.map(item => ({ id: item.id, text: item.text, names: item.display?.names || [], uncertain: Boolean(item.uncertain) })) });
+    this.emit('update', { type: 'queue', paused: this.queuePaused, items: this.queue.map(item => ({ id: item.id, text: item.text, names: item.display?.names || [], uncertain: Boolean(item.uncertain), writerConflict: Boolean(item.writerConflict) })) });
   }
   enqueue(options) {
     if (this.disposed || this.thread.archived) throw new Error('Этот чат недоступен для отправки.');
@@ -134,7 +134,8 @@ class ChatSession extends EventEmitter {
       else this.queue.shift();
     } catch (error) {
       item.uncertain = Boolean(error.uncertainAcceptance); this.queuePaused = true;
-      this.emit('update', { type: 'notice', message: 'Очередь приостановлена: ' + error.message });
+      item.writerConflict = /already has an active writer/i.test(error.message || '');
+      this.emit('update', { type: 'notice', message: item.writerConflict ? 'Чат удерживается другим клиентом. В очереди нажмите «В Codex», чтобы передать запрос в исходный чат. После отправки в приложении удалите этот запрос из очереди здесь.' : 'Очередь приостановлена: ' + error.message });
     } finally {
       this.draining = false; this.queueState();
       if (!this.running) this.drainQueue();

@@ -88,3 +88,14 @@ test('closing a session never starts its queued work', async () => {
   f.session.dispose(); f.complete(); await tick();
   assert.equal(f.calls.filter(([method]) => method === 'turn/start').length, 1);
 });
+
+test('foreign writer keeps queued text and exposes owner handoff instead of replaying it', async () => {
+  const f = fixture();
+  try {
+    await f.session.prepare(); f.fail(Object.assign(new Error('thread synthetic-chat already has an active writer'), {code:-32600}));
+    f.session.enqueue(options('Keep this queued draft')); await tick(); await tick();
+    assert.equal(f.session.queue.length,1); assert.equal(f.session.queuePaused,true);
+    const queue = f.updates.filter(update=>update.type==='queue').at(-1);
+    assert.equal(queue.items[0].writerConflict,true); assert.equal(queue.items[0].text,'Keep this queued draft');
+  } finally {f.session.dispose();}
+});

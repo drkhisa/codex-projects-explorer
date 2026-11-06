@@ -12,7 +12,7 @@ async function fixture() {
   await fs.mkdir(local, { recursive: true });
   const root = await fs.mkdtemp(path.join(local, 'clipboard-'));
   const thread = { id: 'synthetic-chat', cwd: root }, messages = [], rpc = new EventEmitter();
-  let receive, input, dialog, chosen = [];
+  let receive, input, dialog, handoff, chosen = [];
   rpc.releaseThread = async () => {};
   rpc.request = async (method, params) => {
     if (method === 'model/list') return { data: [{ id: 'test-model' }] };
@@ -23,12 +23,13 @@ async function fixture() {
   };
   const panel = { onDidDispose() {}, webview: { postMessage: message => messages.push(message), onDidReceiveMessage: handler => { receive = handler; return { dispose() {} }; } } };
   const controller = {
-    backend: { connect: async () => rpc }, panels: new Map(), sessions: new Map(), updateChatTitle() {}, rebuildTree() {}, setChatRunning() {}, getProjectAccess: () => 'project', waitForProjectAccess: async () => {},
+    backend: { connect: async () => rpc }, panels: new Map(), sessions: new Map(), updateChatTitle() {}, rebuildTree() {}, setChatRunning() {}, getProjectAccess: () => 'project', waitForProjectAccess: async () => {}, openInApp: async (target, draft) => { handoff = { target, draft }; },
     context: { globalStorageUri: { fsPath: root }, globalState: { get: () => ({}), update: async () => {} } }
   };
   createChatPanel({ window: { createWebviewPanel: () => panel, showOpenDialog: async options => { dialog = options; return chosen; } }, ViewColumn: { Active: 1 } }, controller, thread);
   return {
-    root, messages, receive: message => receive(message), input: () => input, choose: files => { chosen = files; }, dialog: () => dialog,
+    root, messages, receive: message => receive(message), input: () => input, choose: files => { chosen = files; }, dialog: () => dialog, handoff: () => handoff, session: () => controller.sessions.get(thread.id),
+    failSend() { const request=rpc.request;rpc.request=async(method,...args)=>{if(method==='turn/start')throw Object.assign(new Error('thread synthetic-chat already has an active writer'),{code:-32600});return request(method,...args);}; },
     async close() { controller.sessions.get(thread.id).dispose(); assert.ok(root.startsWith(local + path.sep)); await fs.rm(root, { recursive: true, force: true }); }
   };
 }
@@ -48,6 +49,35 @@ test('pasted images and files become real attachments sent through the existing 
     assert.deepEqual(await fs.readFile(image.path), Buffer.from(png, 'base64'));
     assert.ok(f.input().some(item => item.type === 'text' && item.text.includes('Synthetic clipboard file')));
   } finally { await f.close(); }
+});
+
+test('owner handoff carries draft and attachment references without sending or clearing attachments', async () => {
+  const f = await fixture();
+  try {
+    await f.receive({ action: 'pasteFiles', files: [{ name: 'backup.awg', data: 'AP+A' }] });
+    const items = f.messages.findLast(message => message.type === 'attachments').items;
+    await f.receive({ action: 'handoff', text: 'Synthetic owner draft', attachments: items.map(item => item.id) });
+    assert.equal(f.handoff().target.id, 'synthetic-chat');
+    assert.match(f.handoff().draft, /Synthetic owner draft/); assert.match(f.handoff().draft, /backup.awg/);
+    assert.equal(f.input(), undefined);
+    await f.receive({ action: 'handoff', text: 'Still available', attachments: items.map(item => item.id) });
+    assert.match(f.handoff().draft, /Still available/);
+  } finally { await f.close(); }
+});
+
+test('queued owner handoff uses the selected saved request and retains its attachments and queue entry', async () => {
+  const f=await fixture();
+  try {
+    await f.session().prepare(); f.failSend();
+    await f.receive({action:'pasteFiles',files:[{name:'backup.awg',data:'AP+A'}]});
+    const items=f.messages.findLast(message=>message.type==='attachments').items;
+    await f.receive({action:'enqueue',text:'Saved queued request',model:'test-model',attachments:items.map(item=>item.id)});
+    await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+    const item=f.session().queue[0];assert.equal(item.writerConflict,true);
+    await f.receive({action:'handoffQueued',id:item.id});
+    assert.match(f.handoff().draft,/Saved queued request/);assert.match(f.handoff().draft,/backup.awg/);
+    assert.equal(f.session().queue.length,1);
+  } finally {await f.close();}
 });
 
 test('clipboard filenames cannot select a path outside extension storage', async () => {

@@ -82,7 +82,7 @@
     input.disabled = false;
     $('status').textContent = running ? 'Codex работает…' : 'Готов';
     $('busy').hidden = !running; $('send').disabled = $('enqueue').disabled = !state.models.length || !!state.pasting || !!state.submitting;
-    $('send').textContent = running ? 'Уточнить сейчас' : '↑'; $('send').title = $('send').textContent; $('send').setAttribute('aria-label', running ? 'Уточнить текущий запрос' : 'Отправить сообщение');
+    $('send').textContent = running ? 'Уточнить сейчас' : '↑'; $('send').title = running ? 'Уточнить сейчас (Ctrl+Enter)' : 'Отправить сообщение (Ctrl+Enter)'; $('send').setAttribute('aria-label', running ? 'Уточнить текущий запрос' : 'Отправить сообщение');
   }
   const effortLabels = { minimal:'Минимально', low:'Низкая', medium:'Средняя', high:'Высокая', xhigh:'Очень высокая', max:'Максимальная', ultra:'Ultra', none:'Без размышлений' };
   function setEfforts(preferred) {
@@ -166,7 +166,12 @@
     post(action, { text: input.value, model: $('model').value, effort: $('effort').value, attachments: state.attachments.map(a => a.id) });
   }
   $('send').onclick = () => send(); $('enqueue').onclick = () => send('enqueue'); $('stop').onclick = () => post('stop');
+  $('handoff').onclick = () => {
+    if (state.pasting || state.submitting) return;
+    post('handoff', { text: input.value, attachments: state.attachments.map(item => item.id) });
+  };
   function accepted(display) {
+    $('handoff').hidden = true;
     if (state.submitting && input.value === state.submitting.text) { input.value = ''; expandInput(false); }
     state.submitting = null; store(); setRunning(state.running); updateSuggestion();
   }
@@ -179,7 +184,9 @@
       const row = document.createElement('div'), text = document.createElement('span'), remove = document.createElement('button');
       text.textContent = (item.uncertain ? 'Результат неизвестен · ' : '') + (item.text || item.names.join(', ')); text.title = text.textContent;
       remove.textContent = '×'; remove.title = 'Убрать запрос из очереди'; remove.setAttribute('aria-label', remove.title); remove.onclick = () => post('removeQueued', { id: item.id });
-      row.append(text, remove); list.append(row);
+      row.append(text);
+      if (item.writerConflict) { const owner = document.createElement('button'); owner.textContent = 'В Codex'; owner.title = 'Открыть исходный чат с этим запросом; запрос останется в очереди'; owner.onclick = () => post('handoffQueued', { id: item.id }); row.append(owner); }
+      row.append(remove); list.append(row);
     }
   }
   function closeMenu() { $('add-menu').hidden = true; $('attach').setAttribute('aria-expanded', 'false'); }
@@ -255,7 +262,15 @@
       post('pasteFiles', { files: pasted });
     } catch (error) { state.pasting = false; setRunning(state.running); notice(error.message, true); }
   });
-  input.addEventListener('keydown', e => { if (e.key === 'Tab' && !e.shiftKey && !input.value && hintFor(state.lastAssistant) && !state.running) { e.preventDefault(); acceptSuggestion(); return; } if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Tab' && !e.shiftKey && !input.value && hintFor(state.lastAssistant) && !state.running) { e.preventDefault(); acceptSuggestion(); return; }
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+    e.preventDefault();
+    if (e.repeat) return;
+    // Fn is handled only when the keyboard exposes it to the webview.
+    const immediate = e.ctrlKey || e.getModifierState?.('Fn');
+    send(immediate ? (state.running ? 'steer' : 'send') : 'enqueue');
+  });
   $('model').onchange = () => { setEfforts(); store(); }; $('effort').onchange = store; $('access').onchange = () => post('setProjectAccess', { access: $('access').value });
   history.addEventListener('click', e => { const asset = e.target.closest('[data-asset]'); if (asset) { const item = state.assets.get(asset.dataset.asset); if (item?.available) showAsset(item); return; } const link = e.target.closest('a'); if (link) { e.preventDefault(); post('openLink', { url: link.getAttribute('href') }); } });
   window.addEventListener('message', event => {
@@ -292,7 +307,7 @@
     }
     else if (m.type === 'finished') { setRunning(false); if (m.error) notice(m.error, true); else if (m.status === 'interrupted') notice('Ответ остановлен.'); input.focus(); updateSuggestion(); }
     else if (m.type === 'notice') notice(m.message);
-    else if (m.type === 'error') { state.submitting = null; notice(m.message, true); setRunning(m.retrying ? state.running : false); }
+    else if (m.type === 'error') { state.submitting = null; if (m.writerConflict) $('handoff').hidden = false; notice(m.message, true); setRunning(m.retrying ? state.running : false); }
   });
   // Exposed only for deterministic browser QA, never to outside content.
   window.__codexChat = { markdown, hintFor };
