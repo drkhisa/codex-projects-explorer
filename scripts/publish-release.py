@@ -144,6 +144,23 @@ def packages(version, source):
     return source, files, notes[1].strip()
 
 
+def baseline_packages(version, source):
+    metadata = json.loads((ROOT / 'packaging/baseline.json').read_text(encoding='utf-8-sig'))
+    require(version == metadata['version'], 'Baseline version mismatch')
+    require(bool(re.fullmatch(r'[a-f0-9]{7,40}', source)), 'Expected a source commit hash')
+    source = git('rev-parse', source + '^{commit}').decode().strip()
+    require(source == metadata['sourceCommit'], 'Baseline source commit mismatch')
+    data = (ROOT / 'archives' / metadata['filename']).read_bytes()
+    require(len(data) == metadata['size'] and sha256(data).hexdigest() == metadata['sha256'], 'Baseline pin mismatch')
+    require(git('show', source + ':archives/' + metadata['filename']) == data, 'Baseline differs from original source commit')
+    sums = (ROOT / 'archives/SHA256SUMS').read_bytes()
+    require(sums.decode().split() == [metadata['sha256'], metadata['filename']], 'Baseline SHA256SUMS mismatch')
+    require(sums.replace(b'\r\n', b'\n') == git('show', source + ':archives/SHA256SUMS').replace(b'\r\n', b'\n'),
+            'Original SHA256SUMS content changed')
+    notes = f"Неизменённая исходная поставка **{version}**, импортированная 6 ноября 2026.\n\nZIP сохранён побайтно: {metadata['size']} байта; SHA-256 `{metadata['sha256']}`. Приложен исходный `SHA256SUMS`. Команды и установщики из архива при публикации не запускаются."
+    return source, {metadata['filename']: data, 'SHA256SUMS': sums}, notes
+
+
 def tag_commit(client, tag):
     ref = client.request('GET', API + '/git/ref/tags/' + tag, missing=True)
     if ref is None:
@@ -157,9 +174,11 @@ def tag_commit(client, tag):
     raise RuntimeError('Too many annotated tag levels')
 
 
-def publish(version, source, latest=False):
-    source, files, notes = packages(version, source)
+def publish(version, source, latest=False, baseline=False):
+    require(not baseline or not latest, 'The historical baseline cannot become Latest')
+    source, files, notes = baseline_packages(version, source) if baseline else packages(version, source)
     client = Client()
+    previous_latest = client.request('GET', API + '/releases/latest') if baseline else None
     remote = client.request('GET', API + '/compare/' + source + '...main')
     require(remote['status'] in ('ahead', 'identical'), 'Source commit is not published on main')
     tag = 'v' + version
@@ -209,6 +228,8 @@ def publish(version, source, latest=False):
         print(f'{name}: {sha256(data).hexdigest()} {matches[0]["browser_download_url"]}', flush=True)
     if latest:
         require(client.request('GET', API + '/releases/latest')['id'] == release['id'], 'Latest release mismatch')
+    if previous_latest:
+        require(client.request('GET', API + '/releases/latest')['id'] == previous_latest['id'], 'Historical baseline changed Latest')
     print('OK: ' + release['html_url'] + ' source=' + source, flush=True)
 
 
@@ -217,9 +238,10 @@ if __name__ == '__main__':
     parser.add_argument('version')
     parser.add_argument('source_commit')
     parser.add_argument('--latest', action='store_true')
+    parser.add_argument('--baseline', action='store_true', help='Publish the unchanged original ZIP and SHA256SUMS')
     args = parser.parse_args()
     try:
-        publish(args.version, args.source_commit, args.latest)
+        publish(args.version, args.source_commit, args.latest, args.baseline)
     except RuntimeError as error:
         print(str(error), file=sys.stderr)
         sys.exit(1)

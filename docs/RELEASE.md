@@ -25,12 +25,22 @@ GitHub (About) должно отражать актуальное назначе
 Из корня проекта в PowerShell (каждую команду выполнять отдельно):
 
 ```powershell
+rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy python scripts/fetch-baseline.py'
 rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy node scripts/verify.mjs'
 rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy node --test scripts/chat-lifecycle.test.cjs scripts/chat-title.test.cjs'
 rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy python scripts/build-release.py'
 ```
 
 Нужны уже установленные Node.js и Python 3. Новые зависимости не устанавливаются.
+После нового клона сначала загрузить исходную поставку командой fetch-baseline
+выше. В `packaging/baseline.json` закреплены version/filename/размер/SHA-256/URL
+оригинального ZIP из Release v0.5.2. Загрузчик проверяет pin до записи финального
+файла и сохраняет его только в локальной, исключённой из Git папке `archives/`.
+Существующий ZIP не перезаписывается; отсутствующий SHA256SUMS создаётся из pin.
+При уже имеющемся правильном ZIP повторная загрузка не требуется. Verify и
+сборщик также сверяются с отслеживаемым pin и сообщают команду при отсутствии
+baseline. Без локального ZIP для первого bootstrap нужен доступ к Releases.
+
 Сборщик создаёт `builds/<версия>/`: общий ZIP по структуре исходного выпуска,
 отдельные VSIX и ZIP браузерного компонента, `SHA256SUMS`. Существующую папку
 выпуска не перезаписывает. Упаковка использует только явный список файлов расширения
@@ -43,6 +53,8 @@ rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk pro
 Сценарий Mac получает разрешение на исполнение внутри ZIP.
 
 Архив `archives/Codex-Projects-All-0.5.2.zip` и его `SHA256SUMS` неизменяемы.
+Они хранятся локально и как assets Release v0.5.2, а не в текущем Git tree.
+Их удаление из индекса не удаляет рабочие копии и не переписывает историю.
 `docs/original/` и история изменений описывают прошлую поставку, а не результаты
 проверки новой версии. Исходные `npm test`, `npm run package` и
 `npm run build:installer` не восстановлены; использовать команды выше.
@@ -78,6 +90,14 @@ helper без интерактивного входа. Авторизация и
 `--latest` назначает проверенный выпуск последним. При повторном запуске тег
 должен указывать на тот же коммит, а существующие assets — совпадать по хешам.
 Несовпадение останавливает публикацию без удаления или перезаписи файлов.
+
+Историческая поставка v0.5.2 содержит два assets — оригинальный ZIP и SHA256SUMS.
+Для её повторной сверки/доставки предусмотрен `--baseline`, без смены Latest:
+
+```powershell
+rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy python scripts/publish-release.py 0.5.2 6f908b0 --baseline'
+rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy python scripts/fetch-baseline.test.py'
+```
 
 После публикации добавить настоящие ссылки Release и пакетов в README,
 проверить latest и состав assets через API. Существующие архивы и исходные

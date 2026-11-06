@@ -1,4 +1,5 @@
 .local/
+archives/
 builds/*
 !builds/.gitkeep
 reports/*

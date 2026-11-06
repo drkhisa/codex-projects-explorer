@@ -8,11 +8,17 @@ import { spawnSync } from 'node:child_process';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const extension = join(root, 'extension');
 const readJson = file => JSON.parse(readFileSync(file, 'utf8'));
+const baseline = readJson(join(root, 'packaging', 'baseline.json'));
+assert.match(baseline.sha256, /^[a-f0-9]{64}$/);
+assert.equal(baseline.filename, `Codex-Projects-All-${baseline.version}.zip`);
+assert.ok(existsSync(join(root, 'archives', baseline.filename)) && existsSync(join(root, 'archives', 'SHA256SUMS')),
+  'Baseline missing. Run python scripts/fetch-baseline.py before verify/build.');
 const [expectedHash, archiveName] = readFileSync(join(root, 'archives', 'SHA256SUMS'), 'utf8').trim().split(/\s+/);
-assert.match(expectedHash, /^[a-f0-9]{64}$/);
-assert.equal(archiveName, 'Codex-Projects-All-0.5.2.zip');
-const actualHash = createHash('sha256').update(readFileSync(join(root, 'archives', archiveName))).digest('hex');
-assert.equal(actualHash, expectedHash, 'The original release archive changed');
+assert.equal(expectedHash, baseline.sha256, 'Local SHA256SUMS differs from the tracked pin');
+assert.equal(archiveName, baseline.filename);
+const archive = readFileSync(join(root, 'archives', archiveName));
+assert.equal(archive.length, baseline.size, 'The original release archive size changed');
+assert.equal(createHash('sha256').update(archive).digest('hex'), baseline.sha256, 'The original release archive changed');
 
 const pkg = readJson(join(extension, 'package.json'));
 assert.equal(pkg.name, 'codex-projects-explorer');

@@ -4,6 +4,28 @@
 
 SHA-256: `406792c58d2f73915cae1672e1b69f0c3c35fd5979ce2aa44057b5a10105a08b`.
 
+## Хранение после публикации Releases
+
+Неизменённая поставка опубликована в [GitHub Release v0.5.2](https://github.com/drkhisa/codex-projects-explorer/releases/tag/v0.5.2)
+на коммите первоначального импорта `6f908b08ebf7678ae4b0c4e96ddbde21a3546fd8`.
+Assets: [оригинальный ZIP](https://github.com/drkhisa/codex-projects-explorer/releases/download/v0.5.2/Codex-Projects-All-0.5.2.zip)
+и [SHA256SUMS](https://github.com/drkhisa/codex-projects-explorer/releases/download/v0.5.2/SHA256SUMS).
+Размер и SHA-256 ZIP после скачивания подтверждены; Latest остаётся v0.5.5.
+
+`archives/` больше не входит в текущий Git tree и исключена через `.gitignore`.
+Локальные оригиналы сохранены побайтно; старые коммиты не переписывались.
+Версия, имя, размер, SHA-256 и URL закреплены в `packaging/baseline.json`.
+После нового клона выполнить из корня:
+
+```powershell
+rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy python scripts/fetch-baseline.py'
+```
+
+Загрузчик сохраняет только проверенные по pin данные в локальную `archives/`.
+Существующий ZIP не перезаписывается; отсутствующий SHA256SUMS создаётся из pin,
+а не из непроверенного удалённого checksum-файла. Затем доступны verify и упаковка.
+Содержимое ZIP не исполняется. Порядок: [docs/RELEASE.md](RELEASE.md).
+
 ## Что извлечено
 
 - `extension/` — все 42 файла из префикса `extension/` оригинального VSIX, включая читаемые CommonJS-исходники, webview, браузерный компонент, лицензию и исходную документацию.

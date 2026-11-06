@@ -44,13 +44,17 @@ def zip_bytes(files):
 
 def main():
     # Explicit release manifests prevent caches, credentials and history entering ZIPs.
-    original = read('archives/Codex-Projects-All-0.5.2.zip')
+    baseline = read_json('packaging/baseline.json')
+    assert baseline['filename'] == f"Codex-Projects-All-{baseline['version']}.zip"
+    assert all((ROOT / 'archives' / name).is_file() for name in [baseline['filename'], 'SHA256SUMS']), \
+        'Baseline missing. Run python scripts/fetch-baseline.py before verify/build.'
+    original = read('archives/' + baseline['filename'])
     expected, filename = read('archives/SHA256SUMS').decode().split()
-    assert filename == 'Codex-Projects-All-0.5.2.zip'
-    assert sha256(original).hexdigest() == expected, 'Original archive changed'
+    assert filename == baseline['filename'] and expected == baseline['sha256'], 'Local SHA256SUMS differs from tracked pin'
+    assert len(original) == baseline['size'] and sha256(original).hexdigest() == baseline['sha256'], 'Original archive changed'
     with ZipFile(BytesIO(original)) as archive:
         original_files = set(archive.namelist())
-        old_vsix = archive.read('Windows/codex-projects-explorer-0.5.2.vsix')
+        old_vsix = archive.read(f"Windows/codex-projects-explorer-{baseline['version']}.vsix")
     with ZipFile(BytesIO(old_vsix)) as archive:
         vsix_names = set(archive.namelist())
 
@@ -94,13 +98,13 @@ def main():
         files[f'{platform}/{browser_name}'] = browser
         files.update({f'{platform}/browser-bridge/{name}': data for name, data in browser_files.items()})
     files['Windows/installer.json'] = (json.dumps(metadata, ensure_ascii=False, indent=2) + '\n').encode()
-    assert set(files) == {name.replace('0.5.2', version) for name in original_files}, \
+    assert set(files) == {name.replace(baseline['version'], version) for name in original_files}, \
         'Release layout differs from the original Windows/Mac bundle'
     for name, data in files.items():
         if name.endswith('.txt'):
             text = data.decode('utf-8-sig')
             assert version in text, f'Missing release version in {name}'
-            assert '0.5.2' not in text, f'Stale instructions: {name}'
+            assert baseline['version'] not in text, f'Stale instructions: {name}'
     bundle = zip_bytes(files)
     with ZipFile(BytesIO(bundle)) as archive:
         packaged = json.loads(archive.read('Windows/installer.json'))

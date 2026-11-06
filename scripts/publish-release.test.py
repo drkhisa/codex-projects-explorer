@@ -10,6 +10,12 @@ spec.loader.exec_module(release)
 
 
 class PublicationTests(unittest.TestCase):
+    def test_historical_baseline_cannot_replace_latest(self):
+        with patch.object(release, 'Client') as client:
+            with self.assertRaisesRegex(RuntimeError, 'cannot become Latest'):
+                release.publish('0.5.2', '6f908b0', latest=True, baseline=True)
+            client.assert_not_called()
+
     def test_existing_asset_requires_downloaded_hash_and_size(self):
         data = b'synthetic package'
         asset = {'state': 'uploaded', 'size': len(data), 'digest': 'sha256:' + sha256(data).hexdigest(),

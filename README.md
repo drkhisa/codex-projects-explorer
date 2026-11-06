@@ -27,10 +27,10 @@ GitHub: [drkhisa/codex-projects-explorer](https://github.com/drkhisa/codex-proje
 
 | Папка | Содержимое |
 | --- | --- |
-| `archives/` | Неизменяемый исходный ZIP и SHA-256 |
+| `archives/` | Локальный baseline из Release v0.5.2; исключён из Git |
 | `extension/` | Рабочие исходники VS Code и `browser-bridge/` |
 | `installers/` | Установочные сценарии, инструкции и шаблон метаданных Windows/macOS |
-| `packaging/` | Метаданные текущего VSIX и общая инструкция выпуска |
+| `packaging/` | Метаданные VSIX, закреплённый baseline.json и инструкция выпуска |
 | `docs/` | Разбор исходника, роли агентов и оригинальные инструкции |
 | `scripts/` | Настройка временных папок, проверки, тесты, упаковка и публикация Releases |
 | `builds/` | Сборки по версиям и SHA-256; результаты исключены из Git |
@@ -40,18 +40,19 @@ GitHub: [drkhisa/codex-projects-explorer](https://github.com/drkhisa/codex-proje
 Из корня в PowerShell, каждую команду отдельно:
 
 ```powershell
+rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy python scripts/fetch-baseline.py'
 rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy node scripts/verify.mjs'
 rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy node --test scripts/chat-lifecycle.test.cjs scripts/chat-title.test.cjs'
 ```
 
 Для последующей работы в уже открытом терминале выполнить `. .\scripts\Enter-Project.ps1`, затем запускать команды через `rtk`.
 
-Проверки требуют установленный Node.js, не устанавливают пакеты и не запускают плагин. Регрессионные тесты используют синтетические данные внутри проекта. Исходные `npm test`, `npm run package` и `npm run build:installer` не работают: указанные в них файлы не вошли в поставку.
+Загрузка baseline требует Python 3 и доступа к GitHub Releases при первом запуске; при наличии проверенного файла сеть не используется. ZIP скачивается в локальную `archives/`, размер и SHA-256 сверяются с отслеживаемым `packaging/baseline.json` до записи. Существующий исходник не перезаписывается. Проверки требуют установленный Node.js, не устанавливают пакеты и не запускают плагин. Регрессионные тесты используют синтетические данные внутри проекта. Исходные `npm test`, `npm run package` и `npm run build:installer` не работают: указанные в них файлы не вошли в поставку.
 
 Правило **MAJOR.MINOR.PATCH**, команда упаковки на Python и границы проверки: [docs/RELEASE.md](docs/RELEASE.md). При изменении поведения всегда обновляется README; при каждом выпуске сверяются версия, возможности, инструкции, проверки и описание репозитория GitHub.
 
 ## Исходная поставка 0.5.2
 
-Проект восстановлен из оригинального комплекта **0.5.2**. Неизменяемый ZIP и его SHA-256 сохранены в `archives/`, исходные инструкции — в `docs/original/`. Доработки ведутся в `extension/`; оригинальный архив не изменяется. Подробности: [разбор исходной поставки](docs/BASELINE.md).
+Проект восстановлен из оригинального комплекта **0.5.2**. [Неизменённая исходная поставка](https://github.com/drkhisa/codex-projects-explorer/releases/tag/v0.5.2): [ZIP](https://github.com/drkhisa/codex-projects-explorer/releases/download/v0.5.2/Codex-Projects-All-0.5.2.zip) и [SHA256SUMS](https://github.com/drkhisa/codex-projects-explorer/releases/download/v0.5.2/SHA256SUMS). Размер ZIP — 278403 байта, SHA-256 — `406792c58d2f73915cae1672e1b69f0c3c35fd5979ce2aa44057b5a10105a08b`. Локальные копии остаются в `archives/`, но папка больше не отслеживается Git; история репозитория не переписывалась. Исходные инструкции сохранены в `docs/original/`, разработка ведётся в `extension/`. Подробности: [разбор исходной поставки](docs/BASELINE.md).
 
 Правила работы: [AGENTS.md](AGENTS.md), [рабочие чаты](docs/CHATS.md), [роли агентов](docs/agents/). Исходная лицензия расширения: [MIT](extension/LICENSE.txt).
