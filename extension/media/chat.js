@@ -52,7 +52,7 @@
     flush(); return html;
   }
   function updateJump() { $('jump-bottom').hidden = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 100; }
-  function bottom(force = false) { if (force || state.follow) { scroll.scrollTop = scroll.scrollHeight; state.follow = true; } updateJump(); }
+  function bottom(force = false) { if (state.renderingHistory) return; if (force || state.follow) { scroll.scrollTop = scroll.scrollHeight; state.follow = true; } updateJump(); }
   scroll.addEventListener('scroll', () => { state.follow = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 100; updateJump(); });
   $('jump-bottom').onclick = () => { bottom(true); input.focus(); };
   history.addEventListener('load', event => { if (event.target.tagName === 'IMG') bottom(); }, true);
@@ -78,10 +78,12 @@
   }
   function setRunning(running) {
     state.running = running; updateSuggestion(); $('stop').hidden = !running; $('enqueue').hidden = !running;
-    $('refresh').disabled = running; $('attach').disabled = !!state.pasting;
+    $('refresh').disabled = running || !!state.renderingHistory; $('attach').disabled = !!state.pasting;
+    $('older-history').disabled = $('latest-history').disabled = running || !!state.renderingHistory;
+    $('model').disabled = $('effort').disabled = !state.models.length || !!state.submitting;
     input.disabled = false;
     $('status').textContent = running ? 'Codex работает…' : 'Готов';
-    $('busy').hidden = !running; $('send').disabled = $('enqueue').disabled = !state.models.length || !!state.pasting || !!state.submitting;
+    $('busy').hidden = !running; $('send').disabled = $('enqueue').disabled = !state.models.length || !!state.pasting || !!state.submitting || !!state.renderingHistory;
     $('send').textContent = running ? 'Уточнить сейчас' : '↑'; $('send').title = running ? 'Уточнить сейчас (Ctrl+Enter)' : 'Отправить сообщение (Ctrl+Enter)'; $('send').setAttribute('aria-label', running ? 'Уточнить текущий запрос' : 'Отправить сообщение');
   }
   const effortLabels = { minimal:'Минимально', low:'Низкая', medium:'Средняя', high:'Высокая', xhigh:'Очень высокая', max:'Максимальная', ultra:'Ultra', none:'Без размышлений' };
@@ -235,6 +237,8 @@
   function acceptSuggestion() { const hint = hintFor(state.lastAssistant); if (!input.value && hint && !state.running) { input.value = hint; input.dispatchEvent(new Event('input')); input.focus(); } }
   $('suggestion').onclick = acceptSuggestion;
   $('refresh').onclick = () => post('refresh'); $('app').onclick = () => post('app'); $('changes').onclick = () => post('changes');
+  $('older-history').onclick = () => post('olderHistory');
+  $('latest-history').onclick = () => post('refresh');
   $('terminal').onclick = () => post('resume');
   function expandInput(expanded) {
     document.body.classList.toggle('composer-expanded', expanded);
@@ -273,17 +277,19 @@
   });
   $('model').onchange = () => { setEfforts(); store(); }; $('effort').onchange = store; $('access').onchange = () => post('setProjectAccess', { access: $('access').value });
   history.addEventListener('click', e => { const asset = e.target.closest('[data-asset]'); if (asset) { const item = state.assets.get(asset.dataset.asset); if (item?.available) showAsset(item); return; } const link = e.target.closest('a'); if (link) { e.preventDefault(); post('openLink', { url: link.getAttribute('href') }); } });
-  window.addEventListener('message', event => {
+  window.addEventListener('message', async event => {
     const m = event.data;
     if (m.type === 'title') { document.title = m.title; $('chat-title').textContent = m.title; }
-    else if (m.type === 'history') { history.replaceChildren(); state.messages.clear(); state.tools.clear(); state.requests.clear(); state.assets.clear(); state.lastAssistant = ''; state.lastAssistantId = null;
+    else if (m.type === 'history') { state.renderingHistory = true; setRunning(state.running); history.replaceChildren(); state.messages.clear(); state.tools.clear(); state.requests.clear(); state.assets.clear(); state.lastAssistant = ''; state.lastAssistantId = null;
+      $('history-nav').hidden = !m.hasOlder && !m.older; $('older-history').hidden = !m.hasOlder; $('latest-history').hidden = !m.older;
       if (Array.isArray(m.history.timeline)) {
-        for (const item of m.history.timeline) { if (item.kind === 'message') message(item.role, item.text, item.id, item.attachments); else if (item.kind === 'tool') tool(item); }
+        let rendered = 0;
+        for (const item of m.history.timeline) { if (item.kind === 'message') message(item.role, item.text, item.id, item.attachments); else if (item.kind === 'tool') tool(item); if (++rendered % 40 === 0) await new Promise(resolve => setTimeout(resolve, 0)); }
       } else {
         for (const item of m.history.messages || []) message(item.role, item.text, item.id, item.attachments);
         for (const [index, item] of (m.history.tools || []).entries()) tool({ ...item, id: item.id || 'old-tool-' + index, status: item.status || 'recorded' });
       }
-      if (m.history.note) notice(m.history.note); bottom(true);
+      if (m.history.note) notice(m.history.note); state.renderingHistory = false; setRunning(state.running); bottom(true);
     } else if (m.type === 'catalog') { state.catalog = m.items || []; state.catalogErrors = m.errors || []; state.catalogLoaded = true; renderCatalog(); }
     else if (m.type === 'messageAssets') { const old = state.messages.get(m.itemId); if (old) { message('assistant', old.text, m.itemId, m.attachments); bottom(); } }
     else if (m.type === 'projectAccess') setAccess(m.access, m.projectName);

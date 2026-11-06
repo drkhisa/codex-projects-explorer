@@ -12,10 +12,11 @@ function fixture() {
     getElementById(id) {
       if (!nodes.has(id)) nodes.set(id, { value: '', textContent: '', attributes: new Map(), options: [], add(option) { this.options.push(option); },
         addEventListener: (type, listener) => events.set(id + ':' + type, listener),
-        setAttribute(name, value) { this.attributes.set(name, value); }, getAttribute(name) { return this.attributes.get(name); }, focus() {}, replaceChildren() {} });
+        setAttribute(name, value) { this.attributes.set(name, value); }, getAttribute(name) { return this.attributes.get(name); }, focus() {}, replaceChildren() { this.options = []; } });
       return nodes.get(id);
     } };
   document.getElementById('expand-input').setAttribute('aria-expanded', 'false');
+  document.getElementById('model').disabled = document.getElementById('effort').disabled = true;
   let message;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../extension/media/chat.js'), 'utf8'), {
     document, Option: function(text, value) { this.text = text; this.value = value; }, window: { addEventListener: (_, listener) => { message = listener; } },
@@ -103,4 +104,23 @@ test('writer conflict exposes an explicit owner handoff and keeps the editor dra
   f.nodes.get('handoff').onclick();
   assert.equal(f.posts.at(-1).action, 'handoff'); assert.equal(f.posts.at(-1).text, text);
   assert.equal(f.input.value, text);
+});
+
+test('model and effort selectors unlock after loading and change the next queued request', () => {
+  const f = fixture(), model = f.nodes.get('model'), effort = f.nodes.get('effort');
+  assert.equal(model.disabled, true); assert.equal(effort.disabled, true);
+  f.message({ type: 'models', models: [
+    { id: 'first', supportedReasoningEfforts: [{ reasoningEffort: 'low' }], defaultReasoningEffort: 'low' },
+    { id: 'second', supportedReasoningEfforts: [{ reasoningEffort: 'high' }], defaultReasoningEffort: 'high' }
+  ] });
+  assert.equal(model.disabled, false); assert.equal(effort.disabled, false);
+  f.message({ type: 'state', running: true });
+  assert.equal(model.disabled, false); assert.equal(effort.disabled, false);
+  model.value = 'second'; model.onchange();
+  assert.deepEqual(effort.options.map(option => option.value), ['high']); assert.equal(effort.value, 'high');
+  f.events.get('input:keydown')({ key: 'Enter', preventDefault() {} });
+  assert.equal(f.posts.at(-1).model, 'second'); assert.equal(f.posts.at(-1).effort, 'high');
+  assert.equal(model.disabled, true);
+  f.message({ type: 'queued' }); assert.equal(model.disabled, false); assert.equal(effort.disabled, false);
+  f.message({ type: 'models', models: [] }); assert.equal(model.disabled, true); assert.equal(effort.disabled, true);
 });

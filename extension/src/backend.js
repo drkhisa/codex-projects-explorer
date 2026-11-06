@@ -126,27 +126,31 @@ class Backend {
     catch (e) { this.lastDiagnostics.errors.push(`Не удалось сохранить кэш списка: ${e.message}`); }
     return { threads, projects, diagnostics: this.lastDiagnostics };
   }
-  async history(thread) {
+  async history(thread, { cursor } = {}) {
     let rpcError;
     if (this.options.dataSource !== 'localFiles') {
       try {
         const rpc = await this.connect();
-        let turns;
-        try { turns = await collectPages(rpc, 'thread/turns/list', { threadId: thread.id, limit: 50, sortDirection: 'asc', itemsView: 'full' }); }
+        let turns, olderCursor;
+        try {
+          const page = await rpc.request('thread/turns/list', { threadId: thread.id, limit: 20, sortDirection: 'desc', itemsView: 'full', ...(cursor ? { cursor } : {}) });
+          if (!Array.isArray(page?.data)) throw new Error('Сервер не вернул страницу истории.');
+          turns = [...page.data].reverse(); olderCursor = page.nextCursor || null;
+        }
         catch (e) {
           // A newly started thread has no persisted turns until its first message.
           if (!thread.file && /not materialized yet.*unavailable before first user message/i.test(e.message)) return normalizeTurns([]);
-          if (!unsupported(e)) throw e;
+          if (cursor || !unsupported(e)) throw e;
           const result = await rpc.request('thread/read', { threadId: thread.id, includeTurns: true });
           if (!Array.isArray(result?.thread?.turns)) throw new Error('Сервер не вернул историю.');
           turns = result.thread.turns;
         }
         const result = normalizeTurns(turns);
-        if (!result.messages.length && thread.file) return await readRollout(thread.file);
-        return result;
+        if (!cursor && !olderCursor && !turns.length && thread.file) return await readRollout(thread.file);
+        return { ...result, olderCursor };
       } catch (e) { rpcError = e; }
     }
-    if (thread.file) {
+    if (thread.file && !cursor) {
       const result = await readRollout(thread.file);
       if (rpcError) result.note += `\nApp Server недоступен для этой истории: ${rpcError.message}`;
       return result;

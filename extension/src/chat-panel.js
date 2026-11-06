@@ -25,7 +25,7 @@ function createChatPanel(vscode, controller, thread) {
   const rememberPatch = item=>{if(item?.type==='fileChange' && typeof item.text==='string')patches.set(item.id,item.text);};
   const media = new AttachmentRegistry(vscode, panel, thread); let catalog = new Map();
   controller.sessions.set(thread.id, session); controller.panels.set(thread.id, panel);
-  let closed = false, booting = false, pasting = false;
+  let closed = false, booting = false, pasting = false, olderCursor = null;
   const post = message => { if (!closed) panel.webview.postMessage(message); };
   const fail = error => {
     const writerConflict = /already has an active writer/i.test(error.message || '');
@@ -48,12 +48,12 @@ function createChatPanel(vscode, controller, thread) {
   };
   session.getAccess = async () => { await controller.waitForProjectAccess?.(); return controller.getProjectAccess?.(thread) || 'project'; };
   const attachmentView = () => post({ type: 'attachments', items: [...attachments.values()].map(a => ({ id: a.id, name: a.name, kind: a.kind, ...(a.preview ? { preview: a.preview } : {}) })) });
-  async function bootstrap() {
+  async function bootstrap(older = false) {
     if (booting || session.running) return; booting = true;
     try {
       panel.title = chatTitle(thread); post({ type: 'title', title: panel.title });
-      const results = await Promise.allSettled([controller.backend.history(thread), session.prepare()]);
-      if (results[0].status === 'fulfilled') { for(const item of results[0].value.tools||[])rememberPatch(item);post({ type: 'history', history: await media.history(results[0].value) }); await session.synchronize(); }
+      const results = await Promise.allSettled([controller.backend.history(thread, older ? { cursor: olderCursor } : {}), session.prepare()]);
+      if (results[0].status === 'fulfilled') { olderCursor = results[0].value.olderCursor || null; for(const item of results[0].value.tools||[])rememberPatch(item);post({ type: 'history', older, hasOlder: !!olderCursor, history: await media.history(results[0].value) }); await session.synchronize(); }
       else fail(results[0].reason);
       if (results[1].status === 'fulfilled') post({ type: 'models', models: results[1].value, preferences: preferences() });
       else { post({ type: 'models', models: [] }); fail(results[1].reason); }
@@ -121,6 +121,7 @@ function createChatPanel(vscode, controller, thread) {
       if (!message || typeof message.action !== 'string') return;
       if(message.action==='reviewChange'){const patch=patches.get(message.itemId);if(!patch)throw new Error('Изменения этого ответа недоступны. Обновите историю.');const {ChangesReview}=require('./changes');controller.changes ||= new ChangesReview(vscode);await controller.changes.patch(patch,chatTitle(thread)+' · изменения');return;}
       if (message.action === 'ready' || message.action === 'refresh') await bootstrap();
+      else if (message.action === 'olderHistory') { if (olderCursor) await bootstrap(true); }
       else if (['send', 'steer', 'enqueue', 'handoff'].includes(message.action)) {
         if (booting || pasting) throw new Error('Дождитесь загрузки истории и вложений.');
         await controller.waitForProjectAccess?.();

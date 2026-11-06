@@ -14,3 +14,5 @@
 #input{height:76px;min-height:76px;max-height:76px;overflow-y:auto}.composer-expanded #input{height:min(45vh,400px);max-height:400px}.composer-expand{padding:0 0 0 8px;font-size:11px;line-height:1.2;background:transparent;color:var(--vscode-descriptionForeground);white-space:nowrap}
 
 #send{width:auto;min-width:32px;padding-inline:10px;font-size:14px;border-radius:16px}.queue{max-width:960px;margin:0 auto 8px;padding:8px 12px;border:1px solid var(--vscode-panel-border);border-radius:8px;max-height:140px;overflow:auto;font-size:12px}.queue>div{display:flex;align-items:center;gap:8px}.queue span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.queue button{padding:3px 8px}
+
+.history-nav{width:100%;max-width:960px;margin:0 auto;padding:12px 28px 0}.history-nav button{font-size:12px}

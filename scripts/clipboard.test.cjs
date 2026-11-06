@@ -71,8 +71,13 @@ test('queued owner handoff uses the selected saved request and retains its attac
     await f.session().prepare(); f.failSend();
     await f.receive({action:'pasteFiles',files:[{name:'backup.awg',data:'AP+A'}]});
     const items=f.messages.findLast(message=>message.type==='attachments').items;
+    const paused = new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{f.session().off('update',listener);reject(new Error('Queue did not pause'));},2000);
+      const listener=update=>{if(update.type==='queue' && update.paused){clearTimeout(timer);f.session().off('update',listener);resolve();}};
+      f.session().on('update',listener);
+    });
     await f.receive({action:'enqueue',text:'Saved queued request',model:'test-model',attachments:items.map(item=>item.id)});
-    await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+    await paused;
     const item=f.session().queue[0];assert.equal(item.writerConflict,true);
     await f.receive({action:'handoffQueued',id:item.id});
     assert.match(f.handoff().draft,/Saved queued request/);assert.match(f.handoff().draft,/backup.awg/);
