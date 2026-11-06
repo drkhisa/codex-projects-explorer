@@ -1,0 +1,518 @@
+{
+  "name": "codex-projects-explorer",
+  "displayName": "Codex Projects Explorer",
+  "description": "Проекты Codex и полноценный чат в центральной вкладке: модели, размышления, потоковые ответы и вложения.",
+  "version": "0.5.2",
+  "publisher": "damir-tools",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "codex",
+    "projects",
+    "history",
+    "chats"
+  ],
+  "main": "./src/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onView:codexProjects.tree",
+    "onStartupFinished",
+    "onUri"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": false
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "package": "node scripts/package.js",
+    "build:installer": "node scripts/build-installer.js"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codexProjects",
+          "title": "Проекты Codex",
+          "icon": "media/projects.svg"
+        }
+      ]
+    },
+    "views": {
+      "codexProjects": [
+        {
+          "id": "codexProjects.tree",
+          "name": "Проекты и чаты",
+          "icon": "media/projects.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "codexProjects.refresh",
+        "title": "Обновить проекты и чаты",
+        "category": "Codex Projects",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codexProjects.search",
+        "title": "Найти чат по названию",
+        "category": "Codex Projects",
+        "icon": "$(search)"
+      },
+      {
+        "command": "codexProjects.toggleArchived",
+        "title": "Показать / скрыть архивные чаты",
+        "category": "Codex Projects",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "codexProjects.openChat",
+        "title": "Открыть переписку",
+        "category": "Codex Projects"
+      },
+      {
+        "command": "codexProjects.resume",
+        "title": "Продолжить этот чат в терминале Codex",
+        "category": "Codex Projects",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "codexProjects.openInApp",
+        "title": "Открыть этот чат в приложении Codex",
+        "category": "Codex Projects",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "codexProjects.openProject",
+        "title": "Открыть дерево файлов проекта справа",
+        "category": "Codex Projects",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "codexProjects.addProject",
+        "title": "Добавить папку проекта / задать название",
+        "category": "Codex Projects",
+        "icon": "$(add)"
+      },
+      {
+        "command": "codexProjects.nameProject",
+        "title": "Назвать проект и добавить в основной список",
+        "category": "Codex Projects",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "codexProjects.diagnostics",
+        "title": "Показать диагностику",
+        "category": "Codex Projects",
+        "icon": "$(info)"
+      },
+      {
+        "command": "codexProjects.chooseHome",
+        "title": "Выбрать папку данных Codex",
+        "category": "Codex Projects"
+      },
+      {
+        "command": "codexProjects.switchSection",
+        "title": "Переключить Codex / ChatGPT",
+        "category": "Codex Projects",
+        "icon": "$(chevron-down)"
+      },
+      {
+        "command": "codexProjects.assignSection",
+        "title": "Выбрать раздел для чата",
+        "category": "Codex Projects",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "codexProjects.pinChat",
+        "title": "Закрепить чат",
+        "category": "Codex Projects",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "codexProjects.unpinChat",
+        "title": "Открепить чат",
+        "category": "Codex Projects",
+        "icon": "$(pinned)"
+      },
+      {
+        "command": "codexProjects.archiveChat",
+        "title": "Архивировать чат",
+        "category": "Codex Projects",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "codexProjects.unarchiveChat",
+        "title": "Восстановить чат из архива",
+        "category": "Codex Projects",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "codexProjects.createProject",
+        "title": "Создать новый проект…",
+        "category": "Codex Projects",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "codexProjects.newChat",
+        "title": "Новый чат в проекте",
+        "category": "Codex Projects",
+        "icon": "$(comment-add)"
+      },
+      {
+        "command": "codexProjects.moveChatUp",
+        "title": "Переместить чат выше",
+        "category": "Codex Projects",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "codexProjects.moveChatDown",
+        "title": "Переместить чат ниже",
+        "category": "Codex Projects",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "codexProjects.openSkill",
+        "title": "Посмотреть инструкции скилла",
+        "category": "Codex Projects"
+      },
+      {
+        "command": "codexProjects.chatgptConnectionInfo",
+        "title": "Источники истории ChatGPT",
+        "category": "Codex Projects",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "codexProjects.copySourceDiagnostics",
+        "title": "Скопировать диагностику источников",
+        "category": "Codex Projects",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "codexProjects.createCategory",
+        "title": "Создать категорию внутри проекта…",
+        "category": "Codex Projects",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "codexProjects.renameCategory",
+        "title": "Переименовать категорию…",
+        "category": "Codex Projects",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "codexProjects.deleteCategory",
+        "title": "Удалить категорию, сохранив чаты",
+        "category": "Codex Projects",
+        "icon": "$(remove)"
+      },
+      {
+        "command": "codexProjects.moveToCategory",
+        "title": "Переместить в категорию…",
+        "category": "Codex Projects",
+        "icon": "$(folder)"
+      },
+      {
+        "command": "codexProjects.newChatInCategory",
+        "title": "Новый чат в категории",
+        "category": "Codex Projects",
+        "icon": "$(comment-add)"
+      },
+      {
+        "command": "codexProjects.setProjectAccess",
+        "title": "Доступ всех чатов проекта…",
+        "category": "Codex Projects",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "codexProjects.connectOnline",
+        "title": "Подключить онлайн ChatGPT",
+        "category": "Codex Projects",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "codexProjects.disconnectOnline",
+        "title": "Отключить онлайн ChatGPT и очистить снимки",
+        "category": "Codex Projects",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "codexProjects.openOnlineInBrowser",
+        "title": "Открыть онлайн в ChatGPT",
+        "category": "Codex Projects",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "codexProjects.newChatMenu",
+        "title": "Новый чат…",
+        "category": "Codex Projects",
+        "icon": "$(comment-add)"
+      },
+      {
+        "command": "codexProjects.newStandaloneChat",
+        "title": "Новый чат вне проекта",
+        "category": "Codex Projects",
+        "icon": "$(add)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "codexProjects.newChatMenu",
+          "when": "view == codexProjects.tree",
+          "group": "navigation@0"
+        },
+        {
+          "command": "codexProjects.refresh",
+          "when": "view == codexProjects.tree",
+          "group": "navigation@1"
+        },
+        {
+          "command": "codexProjects.search",
+          "when": "view == codexProjects.tree",
+          "group": "navigation@2"
+        },
+        {
+          "command": "codexProjects.toggleArchived",
+          "when": "view == codexProjects.tree",
+          "group": "navigation@3"
+        },
+        {
+          "command": "codexProjects.addProject",
+          "when": "view == codexProjects.tree",
+          "group": "actions@1"
+        },
+        {
+          "command": "codexProjects.chooseHome",
+          "when": "view == codexProjects.tree",
+          "group": "actions@2"
+        },
+        {
+          "command": "codexProjects.diagnostics",
+          "when": "view == codexProjects.tree",
+          "group": "actions@3"
+        },
+        {
+          "command": "codexProjects.switchSection",
+          "when": "view == codexProjects.tree",
+          "group": "navigation@0"
+        },
+        {
+          "command": "codexProjects.createProject",
+          "when": "view == codexProjects.tree",
+          "group": "navigation@4"
+        },
+        {
+          "command": "codexProjects.copySourceDiagnostics",
+          "when": "view == codexProjects.tree",
+          "group": "actions@4"
+        },
+        {
+          "command": "codexProjects.connectOnline",
+          "when": "view == codexProjects.tree",
+          "group": "actions@0"
+        },
+        {
+          "command": "codexProjects.disconnectOnline",
+          "when": "view == codexProjects.tree",
+          "group": "actions@5"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "codexProjects.resume",
+          "when": "view == codexProjects.tree && viewItem =~ /^codexChat:/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "codexProjects.openInApp",
+          "when": "view == codexProjects.tree && viewItem =~ /^codexChat:/",
+          "group": "navigation@2"
+        },
+        {
+          "command": "codexProjects.openProject",
+          "when": "view == codexProjects.tree && viewItem =~ /^codex(Inferred)?Project$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "codexProjects.nameProject",
+          "when": "view == codexProjects.tree && viewItem == codexInferredProject",
+          "group": "navigation@1"
+        },
+        {
+          "command": "codexProjects.pinChat",
+          "when": "view == codexProjects.tree && viewItem =~ /^codexChat:.*:unpinned$/",
+          "group": "manage@1"
+        },
+        {
+          "command": "codexProjects.unpinChat",
+          "when": "view == codexProjects.tree && viewItem =~ /^codexChat:.*:pinned$/",
+          "group": "manage@1"
+        },
+        {
+          "command": "codexProjects.archiveChat",
+          "when": "view == codexProjects.tree && viewItem =~ /^codexChat:active:/",
+          "group": "manage@2"
+        },
+        {
+          "command": "codexProjects.unarchiveChat",
+          "when": "view == codexProjects.tree && viewItem =~ /^codexChat:archived:/",
+          "group": "manage@2"
+        },
+        {
+          "command": "codexProjects.assignSection",
+          "when": "view == codexProjects.tree && viewItem =~ /^codexChat:/",
+          "group": "manage@3"
+        },
+        {
+          "command": "codexProjects.newChat",
+          "when": "view == codexProjects.tree && viewItem =~ /^codex(Inferred)?Project$/",
+          "group": "inline@0"
+        },
+        {
+          "command": "codexProjects.moveChatUp",
+          "when": "view == codexProjects.tree && viewItem =~ /^codexChat:/",
+          "group": "sort@1"
+        },
+        {
+          "command": "codexProjects.moveChatDown",
+          "when": "view == codexProjects.tree && viewItem =~ /^codexChat:/",
+          "group": "sort@2"
+        },
+        {
+          "command": "codexProjects.createCategory",
+          "when": "view == codexProjects.tree && viewItem =~ /^codex(Inferred)?Project$/",
+          "group": "categories@1"
+        },
+        {
+          "command": "codexProjects.setProjectAccess",
+          "when": "view == codexProjects.tree && viewItem =~ /^codex(Inferred)?Project$/",
+          "group": "categories@2"
+        },
+        {
+          "command": "codexProjects.renameCategory",
+          "when": "view == codexProjects.tree && viewItem == codexCategory",
+          "group": "manage@1"
+        },
+        {
+          "command": "codexProjects.deleteCategory",
+          "when": "view == codexProjects.tree && viewItem == codexCategory",
+          "group": "manage@2"
+        },
+        {
+          "command": "codexProjects.moveToCategory",
+          "when": "view == codexProjects.tree && viewItem =~ /^codexChat:/",
+          "group": "organize@1"
+        },
+        {
+          "command": "codexProjects.newChatInCategory",
+          "when": "view == codexProjects.tree && viewItem == codexCategory",
+          "group": "navigation@1"
+        },
+        {
+          "command": "codexProjects.openOnlineInBrowser",
+          "when": "view == codexProjects.tree && viewItem =~ /^chatgptOnline/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "codexProjects.newChat",
+          "when": "view == codexProjects.tree && viewItem =~ /^codex(Inferred)?Project$/",
+          "group": "navigation@0"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Codex Projects Explorer",
+      "properties": {
+        "codexProjects.codexHome": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Папка данных Codex. Пусто — `CODEX_HOME` или домашняя папка `.codex`. Выбирайте данные приложения на этом компьютере."
+        },
+        "codexProjects.codexExecutable": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Полный путь к codex.exe / codex. По умолчанию используется бинарный файл официального расширения или Codex из PATH."
+        },
+        "codexProjects.dataSource": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "appServer",
+            "localFiles"
+          ],
+          "default": "auto",
+          "scope": "machine",
+          "description": "auto: App Server и дополнение локальными JSONL-сессиями. localFiles: только чтение локальных файлов, без запуска Codex."
+        },
+        "codexProjects.projectStateFile": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Необязательный путь к .codex-global-state.json приложения, если он находится отдельно от папки сессий."
+        },
+        "codexProjects.projects": {
+          "type": "array",
+          "default": [],
+          "scope": "machine",
+          "description": "Дополнительные названия проектов и папки. Не изменяет настройки приложения Codex.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "paths"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "id": {
+                "type": "string"
+              },
+              "section": {
+                "type": "string",
+                "enum": [
+                  "codex",
+                  "chatgpt"
+                ],
+                "default": "codex"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "codexProjects.refreshOnFocus": {
+          "type": "boolean",
+          "default": true,
+          "description": "Обновлять список при возвращении в окно VS Code (не чаще раза в 30 секунд)."
+        },
+        "codexProjects.showSubagents": {
+          "type": "boolean",
+          "default": false,
+          "description": "Также показывать технические чаты подагентов."
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "jsdom": "^31.0.0"
+  }
+}

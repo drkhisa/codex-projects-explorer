@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Codex Projects — ChatGPT Browser Bridge",
+  "description": "Передаёт отображённые проекты, списки чатов и текст выбранной переписки из ChatGPT в локальный VS Code по вашему подключению.",
+  "version": "0.5.2",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "https://chatgpt.com/*"
+  ],
+  "background": {
+    "service_worker": "worker.js"
+  },
+  "action": {
+    "default_title": "ChatGPT → VS Code",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "reader.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "http://127.0.0.1/*"
+      ],
+      "js": [
+        "pair-page.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

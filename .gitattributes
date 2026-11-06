@@ -1,0 +1,6 @@
+* text=auto
+*.zip binary
+*.vsix binary
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.command text eol=lf
