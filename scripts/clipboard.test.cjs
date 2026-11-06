@@ -12,7 +12,7 @@ async function fixture() {
   await fs.mkdir(local, { recursive: true });
   const root = await fs.mkdtemp(path.join(local, 'clipboard-'));
   const thread = { id: 'synthetic-chat', cwd: root }, messages = [], rpc = new EventEmitter();
-  let receive, input;
+  let receive, input, dialog, chosen = [];
   rpc.releaseThread = async () => {};
   rpc.request = async (method, params) => {
     if (method === 'model/list') return { data: [{ id: 'test-model' }] };
@@ -26,9 +26,9 @@ async function fixture() {
     backend: { connect: async () => rpc }, panels: new Map(), sessions: new Map(), updateChatTitle() {}, rebuildTree() {}, setChatRunning() {}, getProjectAccess: () => 'project', waitForProjectAccess: async () => {},
     context: { globalStorageUri: { fsPath: root }, globalState: { get: () => ({}), update: async () => {} } }
   };
-  createChatPanel({ window: { createWebviewPanel: () => panel }, ViewColumn: { Active: 1 } }, controller, thread);
+  createChatPanel({ window: { createWebviewPanel: () => panel, showOpenDialog: async options => { dialog = options; return chosen; } }, ViewColumn: { Active: 1 } }, controller, thread);
   return {
-    root, messages, receive: message => receive(message), input: () => input,
+    root, messages, receive: message => receive(message), input: () => input, choose: files => { chosen = files; }, dialog: () => dialog,
     async close() { controller.sessions.get(thread.id).dispose(); assert.ok(root.startsWith(local + path.sep)); await fs.rm(root, { recursive: true, force: true }); }
   };
 }
@@ -62,10 +62,10 @@ test('clipboard filenames cannot select a path outside extension storage', async
   } finally { await f.close(); }
 });
 
-test('unsupported, malformed, oversized and excessive clipboard batches are rejected before writing', async () => {
+test('malformed, oversized and excessive clipboard batches are rejected before writing', async () => {
   for (const files of [
-    [{ name: 'payload.exe', data: 'YQ==' }], [{ name: 'image.png', data: 'not base64' }],
-    [{ name: 'note.txt', data: 'A'.repeat(350000) }], Array.from({ length: 9 }, () => ({ name: 'a.txt', data: 'YQ==' }))
+    [{ name: '\u0000bad', data: 'YQ==' }], [{ name: 'image.png', data: 'not base64' }],
+    [{ name: 'large.bin', data: 'A'.repeat(70 * 1024 * 1024) }], Array.from({ length: 11 }, () => ({ name: 'a.txt', data: 'YQ==' }))
   ]) {
     const f = await fixture();
     try {
@@ -75,4 +75,31 @@ test('unsupported, malformed, oversized and excessive clipboard batches are reje
       assert.deepEqual(await fs.readdir(f.root), []);
     } finally { await f.close(); }
   }
+});
+
+test('ten arbitrary files are accepted; binaries and large text stay local file references', async () => {
+  const f = await fixture();
+  try {
+    const files = [{ name: 'backup.awg', data: Buffer.from([0, 255, 128]).toString('base64') }, { name: 'large.txt', data: Buffer.from('z'.repeat(300000)).toString('base64') },
+      ...Array.from({ length: 8 }, (_, i) => ({ name: 'file-' + i, data: 'YQ==' }))];
+    await f.receive({ action: 'pasteFiles', files });
+    const items = f.messages.find(message => message.type === 'attachments').items;
+    assert.equal(items.length, 10); assert.ok(items.every(item => item.kind === 'file'));
+    await f.receive({ action: 'send', text: 'Inspect backups', model: 'test-model', attachments: items.map(item => item.id) });
+    assert.equal(f.input().length, 11);
+    assert.ok(f.input().slice(1).every(item => item.type === 'text' && item.text.includes('Прикреплённый файл:') && item.text.length < 1000));
+  } finally { await f.close(); }
+});
+
+test('file picker has no extension filter and enforces the ten attachment limit', async () => {
+  const f = await fixture();
+  try {
+    const file = path.join(f.root, 'backup.awg'); await fs.writeFile(file, 'synthetic backup');
+    f.choose(Array.from({ length: 10 }, () => ({ fsPath: file })));
+    await f.receive({ action: 'attach' });
+    assert.equal(f.dialog().filters, undefined);
+    assert.equal(f.messages.findLast(message => message.type === 'attachments').items.length, 10);
+    f.choose([{ fsPath: file }]); await f.receive({ action: 'attach' });
+    assert.match(f.messages.at(-1).message, /10/);
+  } finally { await f.close(); }
 });

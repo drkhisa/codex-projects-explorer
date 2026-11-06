@@ -16,9 +16,11 @@ class ChatSession extends EventEmitter {
     super(); if (!validId(thread?.id)) throw new Error('Некорректный ID чата.');
     this.backend = backend; this.thread = thread; this.models = []; this.pending = new Map(); this.items = new Map();
     this.running = false; this.resumed = false; this.disposed = false; this.turnId = null; this.stopRequested = false;
+    // shortcut: queued requests live with this panel; persist them if cross-restart queues are needed.
+    this.queue = []; this.queuePaused = false;
     this.onNotification = msg => this.notification(msg);
     this.onRequest = request => this.serverRequest(request);
-    this.onClosed = () => { if (this.running) this.requiresSync = true; this.running = false; this.resumed = false; this.turnId = null; this.pending.clear(); this.emit('update', { type: 'requestsCleared' }); this.emit('update', { type: 'error', message: 'Соединение с Codex закрыто. Обновите вкладку перед повторной отправкой.' }); this.state(); };
+    this.onClosed = () => { if (this.running) this.requiresSync = true; this.queuePaused = true; this.queueState(); this.running = false; this.resumed = false; this.turnId = null; this.pending.clear(); this.emit('update', { type: 'requestsCleared' }); this.emit('update', { type: 'error', message: 'Соединение с Codex закрыто. Обновите вкладку перед повторной отправкой.' }); this.state(); };
   }
   async prepare() {
     if (this.disposed) throw new Error('Чат закрыт.');
@@ -39,7 +41,7 @@ class ChatSession extends EventEmitter {
     if (!ACCESS[selection.access]) throw new Error('Выберите режим доступа.');
     return model;
   }
-  async send({ text, model, effort, access = 'project', extraInputs = [] }) {
+  async send({ text, model, effort, access = 'project', extraInputs = [], source = 'send', display }) {
     await this.releasing;
     if (this.disposed) throw new Error('Чат закрыт.');
     if (this.running) throw new Error('Дождитесь ответа или остановите текущую задачу.');
@@ -79,12 +81,63 @@ class ChatSession extends EventEmitter {
         ...(effort ? { effort } : {}), approvalPolicy: 'on-request', approvalsReviewer: 'user', sandboxPolicy: permissions.policy(this.thread.cwd) }, 120000);
       if (this.running) this.turnId = result.turn?.id || this.turnId;
       if (!this.thread.preview && text.trim()) this.thread.preview = text.trim().slice(0, 200);
-      this.emit('update', { type: 'sent' }); this.state();
+      this.emit('update', { type: 'sent', source, display }); this.state();
       if (this.stopRequested && this.running) await this.stop();
       return result;
     } catch (e) {
-      if (startingTurn && !Number.isFinite(e.code)) this.requiresSync = true;
+      if (startingTurn && !Number.isFinite(e.code)) { this.requiresSync = true; e.uncertainAcceptance = true; }
       this.running = Boolean(this.requiresSync && this.turnId); this.state(); throw e;
+    }
+  }
+  async steer({ text, extraInputs = [], display }) {
+    if (this.disposed || !this.running || !this.turnId || this.stopRequested || this.requiresSync) throw new Error('Нет доступного активного ответа для уточнения. Текст сохранён; отправьте его после завершения ответа.');
+    if (typeof text !== 'string' || text.length > 1000000 || (!text.trim() && !extraInputs.length)) throw new Error('Введите уточнение или добавьте файл.');
+    const expectedTurnId = this.turnId;
+    // Never turn a raced or rejected steer into a new run automatically.
+    try {
+      await this.rpc.request('turn/steer', { threadId: this.thread.id, expectedTurnId, input: [...(text.trim() ? [{ type: 'text', text }] : []), ...extraInputs] }, 120000);
+    } catch (error) {
+      if (!Number.isFinite(error.code)) { this.requiresSync = true; this.queuePaused = true; this.queueState(); }
+      throw error;
+    }
+    this.emit('update', { type: 'sent', source: 'steer', display });
+  }
+  queueState() {
+    this.emit('update', { type: 'queue', paused: this.queuePaused, items: this.queue.map(item => ({ id: item.id, text: item.text, names: item.display?.names || [], uncertain: Boolean(item.uncertain) })) });
+  }
+  enqueue(options) {
+    if (this.disposed || this.thread.archived) throw new Error('Этот чат недоступен для отправки.');
+    if (this.queue.length >= 10) throw new Error('В очереди уже 10 запросов.');
+    if (typeof options.text !== 'string' || options.text.length > 1000000 || (!options.text.trim() && !options.extraInputs?.length)) throw new Error('Введите сообщение или добавьте файл.');
+    this.validate(options);
+    const item = { ...options, id: require('node:crypto').randomUUID(), source: 'queue' };
+    this.queue.push(item); this.queueState();
+    this.emit('update', { type: 'queued', display: options.display });
+    this.drainQueue();
+  }
+  removeQueued(id) {
+    if (this.draining && this.queue[0]?.id === id) throw new Error('Запрос уже отправляется.');
+    this.queue = this.queue.filter(item => item.id !== id); this.queueState();
+  }
+  resumeQueue() {
+    if (this.queue.some(item => item.uncertain)) throw new Error('Результат отправки неизвестен. Проверьте историю и удалите такой запрос из очереди перед продолжением.');
+    this.queuePaused = false; this.queueState(); this.drainQueue();
+  }
+  async drainQueue() {
+    if (this.draining || this.running || this.releasing || this.disposed || this.queuePaused || !this.queue.length) return;
+    this.draining = true;
+    const item = this.queue[0];
+    try {
+      const access = this.getAccess ? await this.getAccess() : item.access;
+      const result = await this.send({ ...item, access });
+      if (result.cancelled) this.queuePaused = true;
+      else this.queue.shift();
+    } catch (error) {
+      item.uncertain = Boolean(error.uncertainAcceptance); this.queuePaused = true;
+      this.emit('update', { type: 'notice', message: 'Очередь приостановлена: ' + error.message });
+    } finally {
+      this.draining = false; this.queueState();
+      if (!this.running) this.drainQueue();
     }
   }
   notification(msg) {
@@ -92,10 +145,12 @@ class ChatSession extends EventEmitter {
     const method = msg.method;
     if (method === 'turn/started') { this.turnId = p.turn?.id; this.running = true; this.state(); }
     else if (method === 'turn/completed') {
+      if (this.stopRequested || p.turn?.status !== 'completed' || p.turn?.error) this.queuePaused = true;
       this.running = false; this.turnId = null; this.stopRequested = false;
       this.pending.clear(); this.emit('update', { type: 'requestsCleared' });
-      this.release().catch(e => this.emit('update', { type: 'notice', message: e.message })).finally(() => {
+      this.release().catch(e => { this.queuePaused = true; this.emit('update', { type: 'notice', message: e.message }); }).finally(() => {
         this.emit('update', { type: 'finished', status: p.turn?.status, error: p.turn?.error?.message || '' }); this.state();
+        this.queueState(); this.drainQueue();
       });
     } else if (method === 'thread/closed') {
       this.resumed = false;
@@ -159,6 +214,7 @@ class ChatSession extends EventEmitter {
     this.emit('update', { type: 'requestResolved', requestId: String(requestId) });
   }
   async stop() {
+    this.queuePaused = true; this.queueState();
     this.stopRequested = true;
     if (this.running && this.turnId && this.rpc && !this.rpc.closed) await this.rpc.request('turn/interrupt', { threadId: this.thread.id, turnId: this.turnId });
   }

@@ -7,21 +7,21 @@ const vm = require('node:vm');
 const { renderChatShell } = require('../extension/src/view');
 
 function fixture() {
-  const nodes = new Map(), events = new Map(), classes = new Set(), saved = [];
+  const nodes = new Map(), events = new Map(), classes = new Set(), saved = [], posts = [];
   const document = { body: { classList: { toggle: (name, enabled) => enabled ? classes.add(name) : classes.delete(name) } }, addEventListener() {}, querySelectorAll: () => [],
     getElementById(id) {
-      if (!nodes.has(id)) nodes.set(id, { value: '', textContent: '', attributes: new Map(),
+      if (!nodes.has(id)) nodes.set(id, { value: '', textContent: '', attributes: new Map(), options: [], add(option) { this.options.push(option); },
         addEventListener: (type, listener) => events.set(id + ':' + type, listener),
-        setAttribute(name, value) { this.attributes.set(name, value); }, getAttribute(name) { return this.attributes.get(name); }, focus() {} });
+        setAttribute(name, value) { this.attributes.set(name, value); }, getAttribute(name) { return this.attributes.get(name); }, focus() {}, replaceChildren() {} });
       return nodes.get(id);
     } };
   document.getElementById('expand-input').setAttribute('aria-expanded', 'false');
   let message;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../extension/media/chat.js'), 'utf8'), {
-    document, window: { addEventListener: (_, listener) => { message = listener; } },
-    acquireVsCodeApi: () => ({ getState: () => ({ draft: 'Long synthetic draft\n'.repeat(100) }), setState: value => saved.push(value), postMessage() {} })
+    document, Option: function(text, value) { this.text = text; this.value = value; }, window: { addEventListener: (_, listener) => { message = listener; } },
+    acquireVsCodeApi: () => ({ getState: () => ({ draft: 'Long synthetic draft\n'.repeat(100) }), setState: value => saved.push(value), postMessage: value => posts.push(value) })
   });
-  return { input: nodes.get('input'), button: nodes.get('expand-input'), classes, events, saved, message: data => message({ data }) };
+  return { input: nodes.get('input'), button: nodes.get('expand-input'), nodes, posts, classes, events, saved, message: data => message({ data }) };
 }
 
 test('long input saves the draft without assigning an automatic inline height', () => {
@@ -50,9 +50,23 @@ test('explicit expand and collapse retain text and caret and expose accessible s
 
 test('an accepted send restores the compact composer for the next message', () => {
   const f = fixture();
-  f.button.onclick(); f.message({ type: 'sent' });
+  f.message({ type: 'models', models: [{ id: 'synthetic' }] });
+  f.button.onclick(); f.nodes.get('send').onclick(); f.message({ type: 'sent', source: 'send' });
   assert.equal(f.classes.has('composer-expanded'), false);
   assert.equal(f.button.textContent, 'Развернуть');
   assert.equal(f.input.value, '');
   assert.equal(f.saved.at(-1).draft, '');
+});
+
+test('while running the editor stays enabled and sends steer or queue without losing a newer draft', () => {
+  const f = fixture(); f.message({ type: 'models', models: [{ id: 'synthetic' }] }); f.message({ type: 'state', running: true });
+  assert.equal(f.input.disabled, false); assert.equal(f.nodes.get('enqueue').hidden, false);
+  f.input.value = 'Clarify now'; f.nodes.get('send').onclick();
+  assert.equal(f.posts.at(-1).action, 'steer');
+  f.input.value = 'A newer draft'; f.message({ type: 'sent', source: 'steer' });
+  assert.equal(f.input.value, 'A newer draft');
+  f.nodes.get('enqueue').onclick(); assert.equal(f.posts.at(-1).action, 'enqueue');
+  f.message({ type: 'queued' }); assert.equal(f.input.value, '');
+  f.input.value = 'Draft during queue'; f.button.onclick(); f.message({ type: 'sent', source: 'queue' });
+  assert.equal(f.input.value, 'Draft during queue'); assert.equal(f.classes.has('composer-expanded'), true);
 });

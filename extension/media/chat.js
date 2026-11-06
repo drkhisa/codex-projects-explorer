@@ -77,11 +77,12 @@
     updateSuggestion(); return item;
   }
   function setRunning(running) {
-    state.running = running; if (running) closeMenu(); updateSuggestion(); $('send').hidden = running; $('stop').hidden = !running;
-    for (const id of ['model', 'effort', 'attach', 'refresh']) $(id).disabled = running || (id === 'attach' && state.pasting);
-    input.disabled = running;
+    state.running = running; updateSuggestion(); $('stop').hidden = !running; $('enqueue').hidden = !running;
+    $('refresh').disabled = running; $('attach').disabled = !!state.pasting;
+    input.disabled = false;
     $('status').textContent = running ? 'Codex работает…' : 'Готов';
-    $('busy').hidden = !running; $('send').disabled = !state.models.length || state.pasting;
+    $('busy').hidden = !running; $('send').disabled = $('enqueue').disabled = !state.models.length || !!state.pasting || !!state.submitting;
+    $('send').textContent = running ? 'Уточнить сейчас' : '↑'; $('send').title = $('send').textContent; $('send').setAttribute('aria-label', running ? 'Уточнить текущий запрос' : 'Отправить сообщение');
   }
   const effortLabels = { minimal:'Минимально', low:'Низкая', medium:'Средняя', high:'Высокая', xhigh:'Очень высокая', max:'Максимальная', ultra:'Ultra', none:'Без размышлений' };
   function setEfforts(preferred) {
@@ -158,14 +159,29 @@
     else { if (!req.availableDecisions || req.availableDecisions.includes('accept')) action('Разрешить один раз', true); if (!req.availableDecisions || req.availableDecisions.includes('decline')) action('Отклонить', false, true); if (req.availableDecisions?.includes('cancel')) action('Отменить действие', false, true, 'cancel'); }
     state.requests.get(req.requestId)?.remove(); state.requests.set(req.requestId, box); history.append(box); bottom(true);
   }
-  function send() {
-    if (state.running || state.pasting || !state.models.length || (!input.value.trim() && !state.attachments.length)) return;
-    store(); const text = input.value; const labels = state.attachments.filter(a => !a.preview).map(a => '[' + a.name + ']').join('\n');
-    state.pendingUser = message('user', [text, labels].filter(Boolean).join('\n'), 'pending-' + Date.now(), state.attachments.filter(a => a.preview).map(a => a.preview));
-    setRunning(true); bottom(true);
-    post('send', { text, model: $('model').value, effort: $('effort').value, access: $('access').value, attachments: state.attachments.map(a => a.id) });
+  function send(action = state.running ? 'steer' : 'send') {
+    if (state.submitting || state.pasting || !state.models.length || (!input.value.trim() && !state.attachments.length)) return;
+    store(); state.submitting = { text: input.value };
+    setRunning(state.running);
+    post(action, { text: input.value, model: $('model').value, effort: $('effort').value, attachments: state.attachments.map(a => a.id) });
   }
-  $('send').onclick = send; $('stop').onclick = () => post('stop');
+  $('send').onclick = () => send(); $('enqueue').onclick = () => send('enqueue'); $('stop').onclick = () => post('stop');
+  function accepted(display) {
+    if (state.submitting && input.value === state.submitting.text) { input.value = ''; expandInput(false); }
+    state.submitting = null; store(); setRunning(state.running); updateSuggestion();
+  }
+  function showQueue(update) {
+    const list = $('queue'); list.replaceChildren(); list.hidden = !update.items.length;
+    if (!update.items.length) return;
+    const title = document.createElement('div'); title.textContent = update.paused ? 'Очередь приостановлена' : 'Очередь запросов'; list.append(title);
+    if (update.paused) { const resume = document.createElement('button'); resume.textContent = 'Продолжить очередь'; resume.onclick = () => post('resumeQueue'); list.append(resume); }
+    for (const item of update.items) {
+      const row = document.createElement('div'), text = document.createElement('span'), remove = document.createElement('button');
+      text.textContent = (item.uncertain ? 'Результат неизвестен · ' : '') + (item.text || item.names.join(', ')); text.title = text.textContent;
+      remove.textContent = '×'; remove.title = 'Убрать запрос из очереди'; remove.setAttribute('aria-label', remove.title); remove.onclick = () => post('removeQueued', { id: item.id });
+      row.append(text, remove); list.append(row);
+    }
+  }
   function closeMenu() { $('add-menu').hidden = true; $('attach').setAttribute('aria-expanded', 'false'); }
   function renderCatalog() {
     const list = $('catalog-list'), query = $('add-search').value.toLowerCase(); list.replaceChildren();
@@ -225,8 +241,8 @@
     const files = [...(event.clipboardData?.files || [])];
     if (!files.length) return;
     event.preventDefault();
-    if (state.running || state.pasting) { notice('Дождитесь завершения текущей операции.', true); return; }
-    if (files.length + state.attachments.length > 8 || files.reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024) { notice('Можно вставить до 8 файлов общим размером до 50 МБ.', true); return; }
+    if (state.pasting || state.submitting) { notice('Дождитесь добавления или отправки вложений.', true); return; }
+    if (files.length + state.attachments.length > 10 || files.reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024) { notice('Можно вставить до 10 файлов общим размером до 50 МБ.', true); return; }
     state.pasting = true; setRunning(state.running); $('status').textContent = 'Добавляю вложения…';
     try {
       const pasted = [];
@@ -267,10 +283,16 @@
     else if (m.type === 'request') { request(m.request); $('status').textContent = 'Ожидается ваш ответ'; }
     else if (m.type === 'requestResolved') { state.requests.get(m.requestId)?.remove(); state.requests.delete(m.requestId); }
     else if (m.type === 'requestsCleared') { for (const item of state.requests.values()) item.remove(); state.requests.clear(); }
-    else if (m.type === 'sent') { input.value = ''; state.pendingUser = null; expandInput(false); store(); post('clearAttachments'); }
+    else if (m.type === 'queued') accepted(m.display);
+    else if (m.type === 'queue') showQueue(m);
+    else if (m.type === 'sent') {
+      if (m.display) message('user', [m.display.text, ...m.display.names.map(name => '[' + name + ']')].filter(Boolean).join('\n'), 'sent-' + Date.now() + '-' + Math.random(), m.display.assets);
+      if (m.source !== 'queue') accepted(m.display);
+      bottom(true);
+    }
     else if (m.type === 'finished') { setRunning(false); if (m.error) notice(m.error, true); else if (m.status === 'interrupted') notice('Ответ остановлен.'); input.focus(); updateSuggestion(); }
     else if (m.type === 'notice') notice(m.message);
-    else if (m.type === 'error') { notice(m.message, true); if (!m.retrying) { setRunning(false); state.pendingUser?.node.classList.add('failed'); } }
+    else if (m.type === 'error') { state.submitting = null; notice(m.message, true); setRunning(m.retrying ? state.running : false); }
   });
   // Exposed only for deterministic browser QA, never to outside content.
   window.__codexChat = { markdown, hintFor };
