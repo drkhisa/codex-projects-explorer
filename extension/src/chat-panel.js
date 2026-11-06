@@ -9,6 +9,7 @@ const { loadCatalog } = require('./catalog');
 
 const IMAGES = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 const TEXT = new Set(['.txt', '.md', '.json', '.yaml', '.yml', '.js', '.ts', '.tsx', '.jsx', '.py', '.gd', '.cs', '.cpp', '.c', '.h', '.log', '.csv', '.html', '.css', '.toml', '.xml', '.sql', '.lrc']);
+const MAX_BYTES = { image: 10 * 1024 * 1024, text: 256 * 1024, document: 50 * 1024 * 1024 };
 
 function createChatPanel(vscode, controller, thread) {
   const panel = vscode.window.createWebviewPanel('codexProjects.chat', chatTitle(thread), controller.files?.editorColumn || vscode.ViewColumn.Active,
@@ -18,9 +19,11 @@ function createChatPanel(vscode, controller, thread) {
   const rememberPatch = item=>{if(item?.type==='fileChange' && typeof item.text==='string')patches.set(item.id,item.text);};
   const media = new AttachmentRegistry(vscode, panel, thread); let catalog = new Map();
   controller.sessions.set(thread.id, session); controller.panels.set(thread.id, panel);
-  let closed = false, booting = false;
+  let closed = false, booting = false, pasting = false;
   const post = message => { if (!closed) panel.webview.postMessage(message); };
-  const fail = error => post({ type: 'error', message: error.message || String(error), retrying: session.running });
+  const fail = error => post({ type: 'error', message: /already has an active writer/i.test(error.message || '')
+    ? 'Этот чат удерживается другим клиентом Codex. Дождитесь освобождения или продолжите его в исходном клиенте. Текст и вложения сохранены.'
+    : error.message || String(error), retrying: session.running });
   session.on('update', update => {
     if (update.type === 'sent') { controller.updateChatTitle(thread); controller.rebuildTree(); }
     if(update.type==='tool' && update.item?.type==='fileChange'){rememberPatch(update.item);controller.files?.refreshChanges();}
@@ -56,11 +59,36 @@ function createChatPanel(vscode, controller, thread) {
       const ext = path.extname(uri.fsPath).toLowerCase();
       if (!IMAGES.has(ext) && !TEXT.has(ext) && !DOCUMENT.has(ext)) throw new Error('Поддерживаются изображения, документы и текстовые файлы.');
       const stat = await fs.stat(uri.fsPath), kind = IMAGES.has(ext) ? 'image' : TEXT.has(ext) ? 'text' : 'document';
-      if (!stat.isFile() || stat.size > (kind === 'image' ? 10 * 1024 * 1024 : kind === 'text' ? 256 * 1024 : 50 * 1024 * 1024)) throw new Error('Файл слишком большой: изображение — до 10 МБ, текст — до 256 КБ, документ — до 50 МБ.');
+      if (!stat.isFile() || stat.size > MAX_BYTES[kind]) throw new Error('Файл слишком большой: изображение — до 10 МБ, текст — до 256 КБ, документ — до 50 МБ.');
       const id = crypto.randomUUID(), name = path.basename(uri.fsPath), preview = await media.register({ kind: kind === 'image' ? 'image' : 'document', location: uri.fsPath, name, explicit: true }, 'user');
       attachments.set(id, { id, name, path: uri.fsPath, kind, preview });
     }
     attachmentView();
+  }
+  async function pasteFiles(files) {
+    if (session.running) throw new Error('Дождитесь завершения ответа перед добавлением вложений.');
+    if (!Array.isArray(files) || !files.length || files.length + attachments.size > 8) throw new Error('Можно добавить до 8 файлов к одному сообщению.');
+    let total = 0;
+    const prepared = files.map(file => {
+      if (typeof file?.name !== 'string' || file.name.length > 255 || /[\x00-\x1f]/.test(file.name)) throw new Error('Некорректное имя файла из буфера обмена.');
+      const name = path.basename(file.name.replace(/\\/g, '/')), ext = path.extname(name).toLowerCase();
+      const kind = IMAGES.has(ext) ? 'image' : TEXT.has(ext) ? 'text' : DOCUMENT.has(ext) ? 'document' : null;
+      if (!kind) throw new Error('Этот формат вложения не поддерживается. Используйте изображение, документ или текстовый файл.');
+      if (typeof file.data !== 'string' || file.data.length > Math.ceil(MAX_BYTES[kind] / 3) * 4 || file.data.length % 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(file.data)) throw new Error('Файл из буфера обмена слишком большой или повреждён.');
+      const bytes = Buffer.from(file.data, 'base64'); total += bytes.length;
+      if (bytes.length > MAX_BYTES[kind] || total > MAX_BYTES.document) throw new Error('Превышен допустимый размер вложений из буфера обмена.');
+      return { id: crypto.randomUUID(), name, ext, kind, bytes };
+    });
+    const directory = path.join(controller.context.globalStorageUri.fsPath, 'clipboard', thread.id);
+    await fs.mkdir(directory, { recursive: true });
+    try {
+      for (const file of prepared) {
+        const location = path.join(directory, file.id + file.ext);
+        await fs.writeFile(location, file.bytes, { flag: 'wx' });
+        const preview = await media.register({ kind: file.kind === 'image' ? 'image' : 'document', location, name: file.name, explicit: true }, 'user');
+        attachments.set(file.id, { id: file.id, name: file.name, path: location, kind: file.kind, preview });
+      }
+    } finally { attachmentView(); }
   }
   async function folder() {
     if (session.running) return;
@@ -90,7 +118,7 @@ function createChatPanel(vscode, controller, thread) {
       if(message.action==='reviewChange'){const patch=patches.get(message.itemId);if(!patch)throw new Error('Изменения этого ответа недоступны. Обновите историю.');const {ChangesReview}=require('./changes');controller.changes ||= new ChangesReview(vscode);await controller.changes.patch(patch,chatTitle(thread)+' · изменения');return;}
       if (message.action === 'ready' || message.action === 'refresh') await bootstrap();
       else if (message.action === 'send') {
-        if (booting) throw new Error('Дождитесь загрузки истории.');
+        if (booting || pasting) throw new Error('Дождитесь загрузки истории и вложений.');
         await controller.waitForProjectAccess?.();
         const ids = Array.isArray(message.attachments) ? [...new Set(message.attachments)] : [];
         const selected = ids.map(id => attachments.get(id));
@@ -122,6 +150,12 @@ function createChatPanel(vscode, controller, thread) {
         finally { post({ type: 'projectAccess', access: controller.getProjectAccess?.(thread) || 'project', projectName: controller.projectScope?.(thread).name || '' }); }
       }
       else if (message.action === 'answer') session.answer(message.requestId, message.answer || {});
+      else if (message.action === 'pasteFiles') {
+        if (pasting) throw new Error('Дождитесь добавления предыдущих вложений.');
+        pasting = true;
+        try { await pasteFiles(message.files); }
+        finally { pasting = false; post({ type: 'pasteDone' }); }
+      }
       else if (message.action === 'attach') await attach();
       else if (message.action === 'attachFolder') await folder();
       else if (message.action === 'attachCode') code();

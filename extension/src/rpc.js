@@ -22,7 +22,7 @@ class CodexRpc extends EventEmitter {
     return this.ready;
   }
   async _start() {
-    this.proc = this.processFactory(this.executable, ['app-server'], {
+    this.proc = this.processFactory(this.executable, ['app-server', '-c', 'thread_unload_delay_secs=0'], {
       stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
       env: { ...process.env, CODEX_HOME: this.home }
     });
@@ -62,6 +62,21 @@ class CodexRpc extends EventEmitter {
       try { this.send({ id, method, params }); }
       catch (e) { clearTimeout(timer); this.pending.delete(id); reject(e); }
     });
+  }
+  async releaseThread(threadId) {
+    let released, timer;
+    const closed = new Promise(resolve => { released = resolve; });
+    const notification = msg => { if (msg.method === 'thread/closed' && msg.params?.threadId === threadId) released(); };
+    this.on('notification', notification); this.on('closed', released);
+    try {
+      const result = await this.request('thread/unsubscribe', { threadId });
+      if (!['unsubscribed', 'notSubscribed', 'notLoaded'].includes(result?.status)) throw new Error('Codex вернул неизвестное состояние освобождения чата.');
+      if (result.status === 'unsubscribed') await Promise.race([closed, new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Codex не подтвердил освобождение чата. Закройте вкладку перед продолжением в другом клиенте.')), 5000);
+      })]);
+    } finally {
+      clearTimeout(timer); this.off('notification', notification); this.off('closed', released);
+    }
   }
   receive(line) {
     let msg; try { msg = JSON.parse(line); } catch { return; }

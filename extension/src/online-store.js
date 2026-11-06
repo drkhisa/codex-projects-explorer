@@ -3,7 +3,11 @@ const { route } = require('../browser-bridge/reader');
 const text = (s, max = 500) => typeof s === 'string' ? s.trim().slice(0, max) : '';
 class OnlineStore {
   constructor() { this.clear(); }
-  clear() { this.projects = new Map(); this.chats = new Map(); this.conversations = new Map(); this.lastSync = null; }
+  clear() { this.projects = new Map(); this.chats = new Map(); this.conversations = new Map(); this.lastSync = null; this.scan = { state: 'idle', note: 'Списки проектов ещё не просматривались.' }; }
+  scanStatus(value) {
+    if (!['loading', 'done', 'failed'].includes(value?.state) || typeof value.note !== 'string') throw new Error('Неверный статус загрузки');
+    this.scan = { state: value.state, note: text(value.note, 1000) };
+  }
   ingest(snapshot) {
     if (snapshot?.version !== 1 || !Array.isArray(snapshot.projects) || !Array.isArray(snapshot.chats)) throw new Error('Неподдерживаемый снимок браузера');
     const page = new URL(snapshot.pageUrl);
@@ -14,7 +18,7 @@ class OnlineStore {
       for (const row of rows) {
         const r = route(row.url);
         if (!r || r.kind !== kind || r.id !== row.id || !text(row.title)) continue;
-        const old = target.get(r.id), projectId = kind === 'chat' ? text(row.projectId, 100) || r.projectId || old?.projectId || '' : undefined;
+        const old = target.get(r.id), projectId = kind === 'chat' ? r.projectId || text(row.projectId, 100) || old?.projectId || '' : undefined;
         target.set(r.id, { id: r.id, title: text(row.title), url: r.url, ...(kind === 'chat' ? { projectId, ...(old?.activity ? {activity:old.activity,activityAt:old.activityAt} : {}) } : {}) });
       }
     };
@@ -39,7 +43,7 @@ class OnlineStore {
   }
   report(connected = false) { return { state: connected ? 'browserConnected' : this.lastSync ? 'browserCache' : 'notConnected',
     threadCount: this.lastSync ? this.chats.size : null, projectCount: this.lastSync ? this.projects.size : null,
-    accountThreadCount: null, accountProjectCount: null, complete: false, coverage: 'rendered-pages', lastSync: this.lastSync }; }
+    accountThreadCount: null, accountProjectCount: null, complete: false, coverage: 'rendered-pages', lastSync: this.lastSync, scan: this.scan }; }
   groups() {
     const groups = [...this.projects.values()].map(p => ({ id: `online-project:${p.id}`, projectId: p.id, name: p.title, origin: 'online', paths: [], url: p.url, threads: [] }));
     const loose = { id: 'online-loose', name: 'Онлайн-чаты без загруженной привязки', origin: 'online', paths: [], threads: [] };

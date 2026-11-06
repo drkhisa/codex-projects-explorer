@@ -6,9 +6,7 @@
 - **MINOR** — новые возможности, например категории, браузерное подключение или просмотр изменений.
 - **PATCH** — исправления существующих функций, например группировки, порядка дерева или подключения.
 
-Текущий выпуск **0.5.5** исправляет получение названия нового чата после
-первого принятого текстового сообщения и обновление метаданных при фоновом опросе.
-Это PATCH после 0.5.4, которая синхронизировала только уже готовое имя/preview.
+Текущий выпуск **0.6.0** добавляет вставку из буфера, кэш метаданных, проекты и текстовую отправку онлайн ChatGPT, архив Codex по проектам и окончательное удаление архивного чата. Также исправлено удержание idle writer и расширены индикаторы активности. Новые возможности повышают MINOR после 0.5.5.
 Версии в `extension/package.json`, браузерном manifest, VSIX manifest и
 `installers/Windows/installer.json` должны совпадать.
 
@@ -27,7 +25,7 @@ GitHub (About) должно отражать актуальное назначе
 ```powershell
 rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy python scripts/fetch-baseline.py'
 rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy node scripts/verify.mjs'
-rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy node --test scripts/chat-lifecycle.test.cjs scripts/chat-title.test.cjs'
+rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy node --test --test-reporter=dot (Get-ChildItem -LiteralPath scripts -Filter *.test.cjs).FullName'
 rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy python scripts/build-release.py'
 ```
 
@@ -72,7 +70,7 @@ baseline. Без локального ZIP для первого bootstrap нуж
 
 ```powershell
 rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy python scripts/publish-release.test.py'
-rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy python scripts/publish-release.py 0.5.5 3b813c8 --latest'
+rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; $releaseCommit = (rtk proxy git rev-parse HEAD).Trim(); rtk proxy python scripts/publish-release.py 0.6.0 $releaseCommit --latest'
 ```
 
 Скрипт использует стандартную библиотеку Python и существующий Git credential
@@ -103,39 +101,55 @@ rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk pro
 проверить latest и состав assets через API. Существующие архивы и исходные
 коммиты старых версий не переписывать.
 
-## Границы проверки
+## Проверки 0.6.0 и ограничения
 
-Структура, синтаксис, синтетические регрессионные тесты и проверки упаковки
-не заменяют запуск в VS Code Extension Host, настоящий Codex App Server,
-Windows GUI, Mac или браузер. Установщики и сопряжение не запускаются при сборке.
-Полная онлайн-история и отправка в онлайн ChatGPT из VS Code остаются нереализованными.
+Пройдены 67 Node-тестов: archive-view 6, chat-lifecycle 9, chat-title 13,
+clipboard 3, metadata-cache 6, online-bridge 22, rpc-release 5, composer-size 3. Общая проверка
+подтверждает pin baseline, JSON, точки входа и синтаксис 31 JS-файла.
+Отдельно проходят 5 Python-тестов fetch-baseline и 3 теста публикации.
+Проверки упаковки сверяют содержимое и CRC ZIP/VSIX, версии, хеш установщика,
+права Mac-сценария и воспроизводимость. После загрузки каждый из четырёх assets
+скачивается с GitHub и сверяется по размеру/SHA-256, тег — по source commit,
+Latest должен указывать на 0.6.0. Предыдущие поставки не перезаписываются.
 
-В 0.5.5 проходят 22 синтетических теста (9 на жизненный цикл, 13 на название)
-и общая проверка, включая синтаксис 31 JS-файла. В чате разработки выполнена
-протокольная интеграционная проверка на нативном App Server
-Codex 0.164.0-alpha.11.1 с синтетическими home/cwd внутри `.local/tmp`.
-Реальные Backend, ChatSession и createChatPanel с подставной панелью VS Code
-выполнили `thread/start`, `model/list`, `thread/read`, `turn/start`,
-`turn/completed` и фоновый `thread/list`. До отправки проверен отдельный
-provider=synthetic, endpoint — локальный HTTP 127.0.0.1 со статическим SSE-ответом
-без авторизации и внешних запросов. Ход завершился, обе подписи стали
-«First synthetic message»; сервер вернул name:null и preview первого сообщения.
-Дополнительно пройдена интеграционная UI-проверка в установленном VS Code 1.145.2.
-Текущие исходники загружены через `--extensionDevelopmentPath`, QA-сценарий —
-через `--extensionTestsPath`; профиль, расширения, рабочая папка, Codex home,
-crash directory и временные файлы изолированы внутри `.local/tmp` на J:.
-Реальные `controller.newChat`, WebviewPanel и renderer JS выполнили отправку
-кнопкой HTML через нативный App Server. После завершения хода TreeItem.label,
-WebviewPanel.title, document.title и h1 равнялись «First synthetic message».
-После `thread/name/set` они стали «Updated synthetic title», черновик
-«Synthetic unsent draft» сохранился. Отчёт pass:true, Code.exe завершился с кодом 0.
-Для чтения DOM и нажатия кнопки использован QA-listener в существующем script/nonce;
-продуктовые исходники не менялись. Harness и отчёты остаются только в `.local/`.
-Настоящая модель, аккаунт, обычный пользовательский профиль, установщики,
-macOS, браузер и сопряжение не проверялись; история пользователя не читалась.
-Готовые выпуски `builds/0.5.3/` и `builds/0.5.4/` не изменяются.
+В чате разработки пройдена интеграционная UI-проверка настоящего VS Code 1.145.2
+с текущими исходниками через --extensionDevelopmentPath/--extensionTestsPath.
+Профиль, расширения, рабочая папка, Codex home, crash directory и temp изолированы
+внутри `J:\ChatGPT\VS Code PlugIn\.local`. Нативный App Server 0.164.0-alpha.11.1 использовал проверенный
+provider=synthetic и статический HTTP/SSE-ответ только с 127.0.0.1.
 
-Перед выпуском записать фактически выполненные проверки и ограничения в
-`packaging/СНАЧАЛА ПРОЧИТАЙ.txt`; не переносить старые утверждения о тестах.
-Коммит и обычный push выполняются только по поручению пользователя.
-`builds/`, `.local/` и `reports/` в Git не добавлять.
+- Реальная кнопка отправки завершила ход; TreeItem.label, WebviewPanel.title,
+  document.title и h1 получили первое сообщение. Переименование сохранило черновик.
+- Второй настоящий App Server продолжил тот же чат после освобождения writer.
+- Реальный ClipboardEvent/DataTransfer с PNG/TXT создал две карточки;
+  отправка передала provider и input_image, и содержимое текстового файла.
+- Компактное поле имело высоту 76 px, в том числе при 120 строках; развёрнутое —
+  около 360 px, свёрнутое — снова 76 px. Текст, выделение и курсор сохранялись.
+  Три composer-регрессии проверяют фиксированную высоту и ручное переключение;
+  успешная отправка возвращает компактный режим.
+- Архивный синтетический чат появился под исходным проектом и был удалён через
+  backend/thread-delete. Другой чат и keep-project.txt сохранились. Отмена модального
+  подтверждения и проверки безопасности покрыты unit-тестами; пользовательские
+  диалоги и данные для удаления не использовались.
+- Повторный запуск того же профиля показал сохранённое дерево до искусственно
+  задержанного ответа thread/list. JSONL-summary повторно читается при изменении
+  size/mtime/ctime; лёгкая сверка каталога RPC остаётся нужна.
+
+Оба UI-отчёта pass:true, exit 0. QA-listener для DOM и синтетические fixtures
+остаются только в .local, в Git и release assets не входят.
+Системный буфер пользователя не менялся. Физическое нажатие Ctrl+V и нативные
+форматы буфера ОС не проверялись: проверен ClipboardEvent в реальном renderer.
+
+Браузерная часть проверена с обеих сторон на синтетическом DOM/HTTP: проекты,
+их membership, текстовая отправка, неизвестный исход, срок команды, loopback,
+Host/Origin, bearer/HMAC и ограничения размера. Живой авторизованный ChatGPT,
+настоящая модель/аккаунт, обычный профиль пользователя, macOS, установщики,
+установка и сопряжение браузера не проверялись. Изменения сайта могут потребовать
+адаптации. Полный архив аккаунта, онлайн-вложения и архив/удаление ChatGPT
+не реализованы. После обновления нужно перезагрузить VS Code и обновить
+браузерный компонент вместе со вкладками ChatGPT; старый протокол отвергается.
+
+Перед выпуском актуализировать packaging/СНАЧАЛА ПРОЧИТАЙ.txt и оба README.
+Код и метаданные коммитить и отправлять обычным push по поручению пользователя;
+archives/, builds/, .local/ и reports/ оставлять вне Git. Завершение выпуска
+включает проверенную публикацию Release assets, а не только source push.

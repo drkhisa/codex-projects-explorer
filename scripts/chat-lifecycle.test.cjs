@@ -14,6 +14,10 @@ function fixture({ loaded = true, materialized = true, status = 'idle', historyE
   const calls = [], turns = [];
   const rpc = new EventEmitter();
   rpc.start = async () => ({});
+  rpc.releaseThread = async threadId => {
+    calls.push({ method: 'thread/unsubscribe', params: { threadId } }); loaded = false;
+    rpc.emit('notification', { method: 'thread/closed', params: { threadId } });
+  };
   rpc.request = async (method, params) => {
     calls.push({ method, params });
     if (method === 'model/list') return { data: [{ id: 'test-model', supportedReasoningEfforts: [] }] };
@@ -69,7 +73,7 @@ test('the first message uses the loaded thread without resuming it', async () =>
   } finally { session.dispose(); }
 });
 
-test('reopening a completed chat in the same server does not acquire another writer', async () => {
+test('a completed chat releases its writer and reopening resumes the stored chat', async () => {
   const f = fixture(), first = f.session();
   await first.send(message);
   f.rpc.emit('notification', { method: 'turn/completed', params: { threadId: f.thread.id, turn: { status: 'completed' } } });
@@ -77,7 +81,7 @@ test('reopening a completed chat in the same server does not acquire another wri
   const reopened = f.session();
   try {
     await reopened.send(message);
-    assert.equal(f.calls.filter(c => c.method === 'thread/resume').length, 0);
+    assert.equal(f.calls.filter(c => c.method === 'thread/resume').length, 1);
     assert.equal(f.calls.filter(c => c.method === 'turn/start').length, 2);
   } finally { reopened.dispose(); }
 });

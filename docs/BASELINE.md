@@ -10,7 +10,8 @@ SHA-256: `406792c58d2f73915cae1672e1b69f0c3c35fd5979ce2aa44057b5a10105a08b`.
 на коммите первоначального импорта `6f908b08ebf7678ae4b0c4e96ddbde21a3546fd8`.
 Assets: [оригинальный ZIP](https://github.com/drkhisa/codex-projects-explorer/releases/download/v0.5.2/Codex-Projects-All-0.5.2.zip)
 и [SHA256SUMS](https://github.com/drkhisa/codex-projects-explorer/releases/download/v0.5.2/SHA256SUMS).
-Размер и SHA-256 ZIP после скачивания подтверждены; Latest остаётся v0.5.5.
+Размер и SHA-256 ZIP после скачивания подтверждены. Исторический baseline
+не назначается Latest; текущая версия указана в README.
 
 `archives/` больше не входит в текущий Git tree и исключена через `.gitignore`.
 Локальные оригиналы сохранены побайтно; старые коммиты не переписывались.

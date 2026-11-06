@@ -1,12 +1,13 @@
 'use strict';
 const { CodexRpc, collectPages } = require('./rpc');
-const { scanLocal, readRollout, contentText, timeSeconds } = require('./local-store');
+const { scanLocal, readRollout, contentText, timeSeconds, validId } = require('./local-store');
 const { readProjectState, canonical } = require('./projects');
 const path = require('node:path');
 const { toolView, historyResult } = require('./history');
 const { contentAttachments, generatedImageAttachment } = require('./attachments');
 
 const SOURCES = ['cli', 'vscode', 'exec', 'appServer', 'subAgent', 'subAgentReview', 'subAgentCompact', 'subAgentThreadSpawn', 'subAgentOther', 'unknown'];
+const CACHE_FIELDS = ['id', 'home', 'archived', 'name', 'preview', 'cwd', 'createdAt', 'updatedAt', 'origin', 'file', 'path', 'source', 'originator', 'threadSource', 'localSource', 'projectId', 'model', 'modelProvider', 'reasoningEffort'];
 function unsupported(e) { return [-32601, -32602].includes(e?.code) || /unsupported|unknown method|not supported/i.test(e?.message || ''); }
 function normalizeThread(t, archived, home) {
   return { ...t, id: t.id, home, archived,
@@ -45,8 +46,16 @@ class Backend {
     this.rpc = this.options.rpcFactory ? this.options.rpcFactory() : new CodexRpc(this.options.executable, this.options.home);
     await this.rpc.start(); return this.rpc;
   }
-  async load(includeArchived, { signal, onProgress } = {}) {
+  async load(includeArchived, { signal, onProgress, onCached } = {}) {
     const { home, dataSource, stateFile } = this.options;
+    if (signal?.aborted) throw new Error('Загрузка отменена.');
+    const sourceKey = JSON.stringify([home, dataSource, stateFile || '', !!this.options.showSubagents]);
+    const cacheKey = JSON.stringify([sourceKey, !!includeArchived]);
+    const previous = this.cache || this.options.cacheState?.get('threadMetadataCacheV1'), sameSource = previous?.sourceKey === sourceKey;
+    let cached = sameSource ? previous : null;
+    if (cached?.key !== cacheKey || !Array.isArray(cached.threads) || !cached.threads.every(t => validId(t?.id) && ['name', 'preview', 'cwd'].every(key => typeof t[key] === 'string')) ||
+      !Array.isArray(cached.projects) || !cached.projects.every(p => p && typeof p.name === 'string' && Array.isArray(p.paths) && p.paths.every(root => typeof root === 'string'))) cached = null;
+    if (cached) onCached?.(structuredClone({ threads: cached.threads, projects: cached.projects }));
     const state = await readProjectState(stateFile || path.join(home, '.codex-global-state.json'));
     const errors = state.error ? [state.error] : [];
     let apiThreads = [], apiSucceeded = false, apiProjects = [], projectApiSucceeded = false;
@@ -55,7 +64,7 @@ class Backend {
         const rpc = await this.connect();
         for (const archived of includeArchived ? [false, true] : [false]) {
           const rows = await collectPages(rpc, 'thread/list', {
-            limit: 100, modelProviders: [], sourceKinds: SOURCES, archived, sortKey: 'updated_at'
+            limit: 100, modelProviders: [], sourceKinds: SOURCES, archived, sortKey: 'updated_at', useStateDbOnly: sameSource
           }, { signal, onPage: n => onProgress?.(`Codex: ${n} ${archived ? 'архивных ' : ''}чатов…`) });
           apiThreads.push(...rows.map(t => normalizeThread(t, archived, home)));
         }
@@ -76,8 +85,8 @@ class Backend {
     let local = { threads: [], files: 0, errors: [] };
     if (dataSource !== 'appServer') {
       try {
-        local = await scanLocal(home, includeArchived, { signal, titles: state.titles,
-          onProgress: (n, total) => { if (n % 25 === 0) onProgress?.(`Локальные сессии: ${n} из ${total}…`); } });
+        local = await scanLocal(home, includeArchived, { signal, titles: state.titles, cache: sameSource ? previous.local || {} : {},
+          onProgress: (n, total) => { if (n % 25 === 0) onProgress?.(`Проверяю изменения: ${n} из ${total}…`); } });
       } catch (e) { if (signal?.aborted) throw e; errors.push(`Локальные сессии: ${e.message}`); }
     }
     const merged = new Map();
@@ -99,13 +108,23 @@ class Backend {
       projectStateRelevantKeys: state.relevantKeys, desktopProjects: state.projects.length,
       projectApiSucceeded, canonicalProjectRecords: apiProjects.length,
       apiSucceeded, apiThreads: apiThreads.length, localFiles: local.files,
+      localFilesRead: local.readFiles || 0, localFilesCached: local.cachedFiles || 0,
       localThreads: local.threads.length, uniqueThreads: threads.length,
       includesArchived: includeArchived, errors: [...errors, ...local.errors],
       scope: 'Локальное хранилище выбранного CODEX_HOME. Облачная история аккаунта не запрашивалась.',
       generatedAt: new Date().toISOString()
     };
     const legacyProjects = state.projects.filter(p => !apiProjects.some(a => p.paths.some(r => a.paths.some(root => canonical(root) === canonical(r)))));
-    return { threads, projects: projectApiSucceeded ? [...apiProjects, ...legacyProjects] : state.projects, diagnostics: this.lastDiagnostics };
+    const projects = projectApiSucceeded ? [...apiProjects, ...legacyProjects] : state.projects;
+    if (signal?.aborted) throw new Error('Загрузка отменена.');
+    const localCache = local.cache || {};
+    if (!includeArchived && sameSource) for (const [file, entry] of Object.entries(previous.local || {})) if (entry?.thread?.archived) localCache[file] = entry;
+    this.cache = { key: cacheKey, sourceKey, local: localCache,
+      threads: threads.map(thread => Object.fromEntries(CACHE_FIELDS.filter(key => thread[key] !== undefined).map(key => [key, key === 'preview' ? thread[key].slice(0, 200) : thread[key]]))),
+      projects: projects.map(p => ({ id: p.id, projectId: p.projectId, name: p.name, paths: p.paths, origin: p.origin, metadata: { 'codexProjects.section': p.metadata?.['codexProjects.section'] } })) };
+    try { await this.options.cacheState?.update('threadMetadataCacheV1', this.cache); }
+    catch (e) { this.lastDiagnostics.errors.push(`Не удалось сохранить кэш списка: ${e.message}`); }
+    return { threads, projects, diagnostics: this.lastDiagnostics };
   }
   async history(thread) {
     let rpcError;
@@ -133,6 +152,23 @@ class Backend {
       return result;
     }
     throw rpcError || new Error('Для этого чата не найден доступный файл истории.');
+  }
+  async deleteArchivedThread(thread) {
+    if (!validId(thread?.id) || !thread.archived || thread.provider === 'chatgpt-browser') throw new Error('Выберите архивный чат Codex.');
+    if (this.options.dataSource === 'localFiles') throw new Error('Источник localFiles доступен только для чтения. Для удаления выберите auto или App Server.');
+    if (thread.home && canonical(thread.home) !== canonical(this.options.home)) throw new Error('Хранилище изменилось. Обновите список перед удалением.');
+    const rpc = await this.connect();
+    const archived = await collectPages(rpc, 'thread/list', { limit: 100, archived: true, sourceKinds: SOURCES, modelProviders: [], useStateDbOnly: false });
+    if (!archived.some(t => t.id === thread.id)) throw new Error('Этот чат больше не находится в архиве. Обновите список.');
+    const metadata = await rpc.request('thread/read', { threadId: thread.id, includeTurns: false });
+    if (metadata.thread?.id !== thread.id || metadata.thread.status?.type === 'active') throw new Error('Состояние чата не позволяет безопасно удалить его.');
+    await rpc.request('thread/delete', { threadId: thread.id });
+    const cached = this.cache || this.options.cacheState?.get('threadMetadataCacheV1');
+    if (cached) {
+      this.cache = { ...cached, threads: Array.isArray(cached.threads) ? cached.threads.filter(t => t?.id !== thread.id) : [], local: Object.fromEntries(Object.entries(cached.local || {}).filter(([, entry]) => entry?.thread?.id !== thread.id)) };
+      try { await this.options.cacheState?.update('threadMetadataCacheV1', this.cache); }
+      catch { return { warning: 'Чат удалён, но сохранение кэша не удалось. Обновите список перед закрытием VS Code.' }; }
+    }
   }
   dispose() { this.rpc?.dispose(); this.rpc = null; }
 }

@@ -78,10 +78,10 @@
   }
   function setRunning(running) {
     state.running = running; if (running) closeMenu(); updateSuggestion(); $('send').hidden = running; $('stop').hidden = !running;
-    for (const id of ['model', 'effort', 'attach', 'refresh']) $(id).disabled = running;
+    for (const id of ['model', 'effort', 'attach', 'refresh']) $(id).disabled = running || (id === 'attach' && state.pasting);
     input.disabled = running;
     $('status').textContent = running ? 'Codex работает…' : 'Готов';
-    $('busy').hidden = !running; $('send').disabled = !state.models.length;
+    $('busy').hidden = !running; $('send').disabled = !state.models.length || state.pasting;
   }
   const effortLabels = { minimal:'Минимально', low:'Низкая', medium:'Средняя', high:'Высокая', xhigh:'Очень высокая', max:'Максимальная', ultra:'Ultra', none:'Без размышлений' };
   function setEfforts(preferred) {
@@ -159,7 +159,7 @@
     state.requests.get(req.requestId)?.remove(); state.requests.set(req.requestId, box); history.append(box); bottom(true);
   }
   function send() {
-    if (state.running || !state.models.length || (!input.value.trim() && !state.attachments.length)) return;
+    if (state.running || state.pasting || !state.models.length || (!input.value.trim() && !state.attachments.length)) return;
     store(); const text = input.value; const labels = state.attachments.filter(a => !a.preview).map(a => '[' + a.name + ']').join('\n');
     state.pendingUser = message('user', [text, labels].filter(Boolean).join('\n'), 'pending-' + Date.now(), state.attachments.filter(a => a.preview).map(a => a.preview));
     setRunning(true); bottom(true);
@@ -213,7 +213,32 @@
   $('suggestion').onclick = acceptSuggestion;
   $('refresh').onclick = () => post('refresh'); $('app').onclick = () => post('app'); $('changes').onclick = () => post('changes');
   $('terminal').onclick = () => post('resume');
-  input.addEventListener('input', () => { updateSuggestion(); input.style.height = 'auto'; input.style.height = Math.min(240, input.scrollHeight) + 'px'; store(); });
+  function expandInput(expanded) {
+    document.body.classList.toggle('composer-expanded', expanded);
+    $('expand-input').setAttribute('aria-expanded', String(expanded));
+    $('expand-input').textContent = expanded ? 'Свернуть' : 'Развернуть';
+    $('expand-input').title = expanded ? 'Свернуть поле сообщения' : 'Развернуть поле сообщения';
+  }
+  $('expand-input').onclick = () => { expandInput($('expand-input').getAttribute('aria-expanded') !== 'true'); input.focus(); };
+  input.addEventListener('input', () => { updateSuggestion(); store(); });
+  input.addEventListener('paste', async event => {
+    const files = [...(event.clipboardData?.files || [])];
+    if (!files.length) return;
+    event.preventDefault();
+    if (state.running || state.pasting) { notice('Дождитесь завершения текущей операции.', true); return; }
+    if (files.length + state.attachments.length > 8 || files.reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024) { notice('Можно вставить до 8 файлов общим размером до 50 МБ.', true); return; }
+    state.pasting = true; setRunning(state.running); $('status').textContent = 'Добавляю вложения…';
+    try {
+      const pasted = [];
+      for (const file of files) {
+        const data = await new Promise((resolve, reject) => {
+          const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1] || ''); reader.onerror = () => reject(new Error('Не удалось прочитать файл из буфера обмена.')); reader.readAsDataURL(file);
+        });
+        pasted.push({ name: file.name || (file.type === 'image/png' ? 'image.png' : 'clipboard.bin'), data });
+      }
+      post('pasteFiles', { files: pasted });
+    } catch (error) { state.pasting = false; setRunning(state.running); notice(error.message, true); }
+  });
   input.addEventListener('keydown', e => { if (e.key === 'Tab' && !e.shiftKey && !input.value && hintFor(state.lastAssistant) && !state.running) { e.preventDefault(); acceptSuggestion(); return; } if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
   $('model').onchange = () => { setEfforts(); store(); }; $('effort').onchange = store; $('access').onchange = () => post('setProjectAccess', { access: $('access').value });
   history.addEventListener('click', e => { const asset = e.target.closest('[data-asset]'); if (asset) { const item = state.assets.get(asset.dataset.asset); if (item?.available) showAsset(item); return; } const link = e.target.closest('a'); if (link) { e.preventDefault(); post('openLink', { url: link.getAttribute('href') }); } });
@@ -233,6 +258,7 @@
     else if (m.type === 'projectAccess') setAccess(m.access, m.projectName);
     else if (m.type === 'models') models(m.models, m.preferences);
     else if (m.type === 'attachments') attachments(m.items);
+    else if (m.type === 'pasteDone') { state.pasting = false; setRunning(state.running); }
     else if (m.type === 'state') setRunning(m.running);
     else if (m.type === 'delta') { const old = state.messages.get(m.itemId); message('assistant', (old?.text || '') + m.delta, m.itemId); bottom(); }
     else if (m.type === 'message') { const old = state.messages.get(m.itemId); if (m.text || !old) message('assistant', m.text || '', m.itemId); bottom(); }
@@ -241,7 +267,7 @@
     else if (m.type === 'request') { request(m.request); $('status').textContent = 'Ожидается ваш ответ'; }
     else if (m.type === 'requestResolved') { state.requests.get(m.requestId)?.remove(); state.requests.delete(m.requestId); }
     else if (m.type === 'requestsCleared') { for (const item of state.requests.values()) item.remove(); state.requests.clear(); }
-    else if (m.type === 'sent') { input.value = ''; state.pendingUser = null; store(); post('clearAttachments'); }
+    else if (m.type === 'sent') { input.value = ''; state.pendingUser = null; expandInput(false); store(); post('clearAttachments'); }
     else if (m.type === 'finished') { setRunning(false); if (m.error) notice(m.error, true); else if (m.status === 'interrupted') notice('Ответ остановлен.'); input.focus(); updateSuggestion(); }
     else if (m.type === 'notice') notice(m.message);
     else if (m.type === 'error') { notice(m.message, true); if (!m.retrying) { setRunning(false); state.pendingUser?.node.classList.add('failed'); } }

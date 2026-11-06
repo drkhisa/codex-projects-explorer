@@ -81,22 +81,34 @@ async function summarizeRollout(file, archived, titles) {
     archived, file, origin: 'localFiles', gitInfo: meta.git || null, projectId: meta.project_id || meta.projectId || null };
 }
 
-async function scanLocal(home, includeArchived = false, { signal, titles = {}, onProgress } = {}) {
+async function scanLocal(home, includeArchived = false, { signal, titles = {}, onProgress, cache = {} } = {}) {
   const titleIndex = { ...titles, ...await readTitleIndex(home) };
   const files = await listRolloutFiles(home, includeArchived, signal);
-  const threads = []; const errors = [];
+  const threads = []; const errors = []; const nextCache = {};
+  let readFiles = 0, cachedFiles = 0;
   // Small pool: many conversations should not exhaust Windows file handles.
   let index = 0;
   await Promise.all(Array.from({ length: Math.min(6, files.length) }, async () => {
     while (index < files.length) {
       if (signal?.aborted) throw new Error('Загрузка отменена.');
       const n = index++, item = files[n];
-      try { const t = await summarizeRollout(item.file, item.archived, titleIndex); if (t) threads.push(t); }
+      try {
+        const stat = await fsp.stat(item.file), old = cache[item.file];
+        let t;
+        if (old && old.size === stat.size && old.mtimeMs === stat.mtimeMs && old.ctimeMs === stat.ctimeMs &&
+          (old.thread === null || (validId(old.thread?.id) && old.thread.file === item.file && old.thread.archived === item.archived))) {
+          t = old.thread; cachedFiles++;
+        } else {
+          t = await summarizeRollout(item.file, item.archived, {}); readFiles++;
+        }
+        nextCache[item.file] = { size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, thread: t ? { ...t, gitInfo: undefined } : null };
+        if (t) threads.push({ ...t, name: titleIndex[t.id] || t.name });
+      }
       catch (e) { errors.push(`Сессия ${path.basename(item.file)}: ${e.message}`); }
       onProgress?.(n + 1, files.length);
     }
   }));
-  return { threads, files: files.length, errors };
+  return { threads, files: files.length, errors, cache: nextCache, readFiles, cachedFiles };
 }
 
 async function readRollout(file) {

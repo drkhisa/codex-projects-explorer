@@ -40,6 +40,8 @@ class ChatSession extends EventEmitter {
     return model;
   }
   async send({ text, model, effort, access = 'project', extraInputs = [] }) {
+    await this.releasing;
+    if (this.disposed) throw new Error('Чат закрыт.');
     if (this.running) throw new Error('Дождитесь ответа или остановите текущую задачу.');
     if (this.thread.archived) throw new Error('Сначала восстановите архивный чат в приложении Codex.');
     if (this.requiresSync) throw new Error('Результат прошлой отправки неизвестен. Нажмите «Обновить» и проверьте историю перед повтором.');
@@ -92,7 +94,11 @@ class ChatSession extends EventEmitter {
     else if (method === 'turn/completed') {
       this.running = false; this.turnId = null; this.stopRequested = false;
       this.pending.clear(); this.emit('update', { type: 'requestsCleared' });
-      this.emit('update', { type: 'finished', status: p.turn?.status, error: p.turn?.error?.message || '' }); this.state();
+      this.release().catch(e => this.emit('update', { type: 'notice', message: e.message })).finally(() => {
+        this.emit('update', { type: 'finished', status: p.turn?.status, error: p.turn?.error?.message || '' }); this.state();
+      });
+    } else if (method === 'thread/closed') {
+      this.resumed = false;
     } else if (method === 'turn/diff/updated' && typeof p.diff === 'string') {
       this.emit('update',{type:'tool',item:{id:'turn-diff-'+p.turnId,type:'fileChange',turnId:p.turnId,text:p.diff,changes:[{path:'Изменения ответа',diff:p.diff}],status:'updated'}});
     } else if (method === 'item/agentMessage/delta') {
@@ -156,6 +162,14 @@ class ChatSession extends EventEmitter {
     this.stopRequested = true;
     if (this.running && this.turnId && this.rpc && !this.rpc.closed) await this.rpc.request('turn/interrupt', { threadId: this.thread.id, turnId: this.turnId });
   }
+  release() {
+    if (this.releasing) return this.releasing;
+    this.resumed = false;
+    const rpc = this.rpc || this.backend.rpc;
+    if (!rpc || rpc.closed) return Promise.resolve();
+    this.releasing = rpc.releaseThread(this.thread.id).finally(() => { this.releasing = null; });
+    return this.releasing;
+  }
   async synchronize() {
     if (this.requiresSync) {
       const metadata = await this.rpc.request('thread/read', { threadId: this.thread.id, includeTurns: false });
@@ -169,6 +183,7 @@ class ChatSession extends EventEmitter {
   }
   dispose() {
     this.disposed = true;
+    this.release().catch(() => {});
     for (const request of this.pending.values()) {
       try {
         if (request.method === 'item/permissions/requestApproval') request.respond({ permissions: {}, scope: 'turn' });

@@ -5,8 +5,38 @@ const EXTENSION_ORIGIN = /^chrome-extension:\/\/[a-p]{32}$/;
 const hex = () => crypto.randomBytes(32).toString('hex');
 function equal(a, b) { const x = Buffer.from(a || ''), y = Buffer.from(b || ''); return x.length === y.length && crypto.timingSafeEqual(x, y); }
 class OnlineBridge {
-  constructor(onSnapshot, { onPair = async () => {} } = {}) { this.onSnapshot = onSnapshot; this.onPair = onPair; this.pending = null; this.peer = null; this.server = null; this.lastSeen = 0; }
+  constructor(onSnapshot, { onPair = async () => {}, onScanStatus = () => {} } = {}) { this.onSnapshot = onSnapshot; this.onPair = onPair; this.onScanStatus = onScanStatus; this.pending = null; this.peer = null; this.server = null; this.lastSeen = 0; this.operations = new Map(); this.sendLocks = new Set(); }
   get connected() { return !!this.peer && Date.now() - this.lastSeen < 90000; }
+  execute(type, value = {}, timeout = type === 'scan' ? 180000 : 45000) {
+    if (!this.connected || this.browserProtocol !== 2) return Promise.resolve({ state: 'failed', note: 'Браузер недоступен или компонент устарел. Обновите браузерное расширение и вкладку ChatGPT.' });
+    if (!['send', 'scan'].includes(type)) throw new Error('Неверная онлайн-команда');
+    if (this.operations.size >= 16) return Promise.resolve({state:'failed',note:'Слишком много ожидающих команд. Дождитесь результата.'});
+    let chatId;
+    if (type === 'send') {
+      const r = require('../browser-bridge/reader').route(value.url);
+      if (r?.kind !== 'chat' || typeof value.text !== 'string' || !value.text.trim() || value.text.length > 32000) throw new Error('Неверное сообщение онлайн-чата');
+      chatId = r.id;
+      if (this.sendLocks.has(chatId)) return Promise.resolve({ state: 'unknown', note: 'Предыдущая отправка ещё выполняется или её исход не подтверждён. Проверьте исходный ChatGPT.' });
+      value = { url: r.url, text: value.text }; this.sendLocks.add(chatId);
+    } else if ([...this.operations.values()].some(op => op.command.type === 'scan')) return Promise.resolve({ state: 'failed', note: 'Загрузка проектов уже идёт.' });
+    return new Promise(resolve => {
+      const id = crypto.randomUUID();
+      const op = { command: { id, type, ...value, expiresAt:Date.now()+timeout }, chatId, dispatched: false, resolve };
+      op.timer = setTimeout(() => this.finish(id, { state: op.dispatched && type === 'send' ? 'unknown' : 'failed', note: op.dispatched && type === 'send' ? 'Браузер не подтвердил результат. Автоповтор отключён; проверьте исходный чат.' : 'Браузер не выполнил команду вовремя. Обновите компонент и вкладку ChatGPT.' }), timeout);
+      op.timer.unref?.(); this.operations.set(id, op);
+    });
+  }
+  finish(id, result) {
+    const op = this.operations.get(id); if (!op) return;
+    clearTimeout(op.timer); this.operations.delete(id);
+    if (op.chatId && result.state !== 'unknown') this.sendLocks.delete(op.chatId);
+    op.resolve(result);
+  }
+  acknowledge(url) {
+    const r = require('../browser-bridge/reader').route(url);
+    if (r?.kind !== 'chat' || [...this.operations.values()].some(op => op.chatId === r.id)) return false;
+    this.sendLocks.delete(r.id);return true;
+  }
   async listen(port = 0) {
     if (this.server) return;
     const server = http.createServer((req, res) => this.handle(req, res));
@@ -19,7 +49,7 @@ class OnlineBridge {
     await this.listen(saved.port); this.peer = { origin: saved.origin, key: saved.key, token: hex() }; return true;
   }
   async start() {
-    await this.listen(); this.peer = null; this.lastSeen = 0;
+    await this.listen(); this.cancelOperations(); this.peer = null; this.lastSeen = 0; this.browserProtocol = null;
     this.pending = { token: hex(), launchId: crypto.randomBytes(24).toString('hex'), expires: Date.now() + 5 * 60000 };
     return Buffer.from(JSON.stringify({ v: 1, port: this.server.address().port, token: this.pending.token })).toString('base64url');
   }
@@ -42,7 +72,7 @@ class OnlineBridge {
     if (!EXTENSION_ORIGIN.test(origin) || (this.peer && origin !== this.peer.origin)) return reply(403, { error: 'origin' });
     res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary', 'Origin');
     if (req.method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'POST'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization'); res.writeHead(204); res.end(); return; }
-    if (req.method !== 'POST' || !['/pair', '/snapshot', '/ping', '/hello', '/restore'].includes(req.url)) return reply(404, { error: 'route' });
+    if (req.method !== 'POST' || !['/pair', '/snapshot', '/ping', '/hello', '/restore', '/commands', '/result', '/scan-status'].includes(req.url)) return reply(404, { error: 'route' });
     if (req.headers['content-type'] !== 'application/json') return reply(415, { error: 'content-type' });
     const pairing = req.url === '/pair', restoring = ['/hello','/restore'].includes(req.url);
     if (pairing ? (!this.pending || this.pending.expires < Date.now()) : !this.peer || (!restoring && !equal(req.headers.authorization, `Bearer ${this.peer.token}`))) return reply(401, { error: 'Reconnect in VS Code' });
@@ -52,6 +82,7 @@ class OnlineBridge {
       if (tooLarge) return;
       try {
         const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('object required');
         if (pairing) {
           if (!this.pending || this.pending.expires < Date.now() || !equal(data.token, this.pending.token)) return reply(401, { error: 'Invalid pairing code' });
           this.peer = { origin, token: hex(), key: hex() }; this.pending = null; this.lastSeen = Date.now();
@@ -65,11 +96,30 @@ class OnlineBridge {
           if(!challenge || challenge.expires<Date.now() || !equal(data.proof,proof)) return reply(401,{error:'pairing required'});
           this.peer.token=hex();this.lastSeen=Date.now();return reply(200,{token:this.peer.token});
         }
-        this.lastSeen = Date.now(); if (req.url === '/snapshot') await this.onSnapshot(data);
+        this.lastSeen = Date.now();
+        if (req.url === '/commands') {
+          if (data.protocol !== 2) return reply(400, {error:'Update browser component'});
+          this.browserProtocol = 2;
+          const op = [...this.operations.values()].find(op => !op.dispatched);
+          // Lease once: losing this response must never cause a duplicate submission.
+          if (op) op.dispatched = true;
+          return reply(200, { command: op?.command || null });
+        }
+        if (req.url === '/result') {
+          if (typeof data.id !== 'string' || !['sent','failed','unknown','done'].includes(data.state) || typeof data.note !== 'string' || data.note.length > 2000) throw new Error('result');
+          const op=this.operations.get(data.id);
+          if (op?.dispatched) {
+            if (op.command.type==='send' ? data.state==='done' : data.state==='sent' || data.state==='unknown') throw new Error('result kind');
+            this.finish(data.id, {state:data.state,note:data.note});
+          }
+        }
+        if (req.url === '/scan-status') await this.onScanStatus(data);
+        if (req.url === '/snapshot') await this.onSnapshot(data);
         reply(200, { ok: true });
       } catch { reply(400, { error: 'Snapshot rejected; check bridge format' }); }
     });
   }
-  dispose() { this.pending = this.peer = this.challenge = null; this.server?.closeAllConnections?.(); this.server?.close(); this.server = null; }
+  cancelOperations() { for (const [id,op] of this.operations) this.finish(id,{state:op.dispatched && op.chatId ? 'unknown' : 'failed',note:'Подключение закрыто. Проверьте исходный ChatGPT перед повторной отправкой.'}); }
+  dispose() { this.cancelOperations(); this.pending = this.peer = this.challenge = null; this.browserProtocol = null; this.server?.closeAllConnections?.(); this.server?.close(); this.server = null; }
 }
 module.exports = { OnlineBridge };

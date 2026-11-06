@@ -103,7 +103,7 @@ test('a webview ready event receives a title changed before its listener was rea
   let receive;
   f.panel.webview.onDidReceiveMessage = handler => { receive = handler; return { dispose() {} }; };
   f.panel.onDidDispose = () => {};
-  const backend = { history: async () => ({ messages: [], tools: [], timeline: [] }), connect: async () => Object.assign(new EventEmitter(), { request: async () => ({ data: [] }) }) };
+  const backend = { history: async () => ({ messages: [], tools: [], timeline: [] }), connect: async () => Object.assign(new EventEmitter(), { request: async () => ({ data: [] }), releaseThread: async () => {} }) };
   f.controller.backend = backend;
   f.controller.context = { globalState: { get: () => ({}) } };
   createChatPanel({ window: { createWebviewPanel: () => f.panel }, ViewColumn: { Active: 1 } }, f.controller, f.thread);
@@ -117,6 +117,7 @@ test('a webview ready event receives a title changed before its listener was rea
 
 function sendingPanel({ name = '', rejected = false } = {}) {
   const f = fixture(), rpc = new EventEmitter();
+  rpc.releaseThread = async () => {};
   let receive, rebuilds = 0;
   f.thread.name = name; f.controller.threads[0].name = name;
   rpc.request = async method => {

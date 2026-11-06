@@ -1,7 +1,7 @@
 {
-  "version": "0.5.5",
+  "version": "0.6.0",
   "installerRevision": 2,
   "extensionId": "damir-tools.codex-projects-explorer",
-  "vsix": "codex-projects-explorer-0.5.5.vsix",
+  "vsix": "codex-projects-explorer-0.6.0.vsix",
   "sha256": ""
 }

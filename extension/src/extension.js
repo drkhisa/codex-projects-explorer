@@ -56,7 +56,7 @@ class ProjectsTree {
     if(element.kind==='newChat'){const item=new vscode.TreeItem('＋ Новый чат');item.id='codexProjects:newChat';item.iconPath=new vscode.ThemeIcon('add');item.command={command:`${PREFIX}.newChatMenu`,title:'Новый чат: в проекте или вне проекта'};item.tooltip='Создать чат вне проекта или выбрать проект';return item;}
     if (element.kind === 'onlineRoot') {
       const item = new vscode.TreeItem('Онлайн ChatGPT — из браузера', vscode.TreeItemCollapsibleState.Expanded);
-      item.id = 'codexProjects:onlineRoot'; item.iconPath = new vscode.ThemeIcon('globe'); item.description = 'Часть истории'; return item;
+      item.id = 'codexProjects:onlineRoot'; item.iconPath = new vscode.ThemeIcon(this.onlineGroups.some(g=>g.threads.some(t=>t.running)) ? 'loading~spin' : 'globe'); item.description = 'Часть истории'; return item;
     }
     if (element.kind === 'onlineProject') {
       const g = element.group, item = new vscode.TreeItem(g.name, vscode.TreeItemCollapsibleState.Collapsed);
@@ -70,7 +70,7 @@ class ProjectsTree {
     }
     if (element.kind === 'category') {
       const item = new vscode.TreeItem(element.category.name, vscode.TreeItemCollapsibleState.Collapsed);
-      item.id = `${element.group.id}:category:${element.category.id}`; item.contextValue = 'codexCategory'; item.iconPath = new vscode.ThemeIcon('folder');
+      item.id = `${element.group.id}:category:${element.category.id}`; item.contextValue = 'codexCategory'; item.iconPath = new vscode.ThemeIcon(element.category.threads.some(t=>t.running) ? 'loading~spin' : 'folder');
       const pinned = element.category.threads.filter(t => t.pinned).length;
       item.description = String(element.category.threads.length - pinned);
       item.tooltip = `${element.group.name} → ${element.category.name}\nКатегория внутри проекта${pinned ? `\nЗакреплённых чатов показано выше категорий: ${pinned}` : ''}`; return item;
@@ -78,7 +78,7 @@ class ProjectsTree {
     if (element.kind === 'sourceStatus') {
       const item = new vscode.TreeItem(this.onlineStatus || 'Подключить онлайн ChatGPT…');
       item.id = 'codexProjects:chatgptAccountHistory'; item.iconPath = new vscode.ThemeIcon('plug');
-      item.tooltip = 'Подключение через браузер, где вы вошли в ChatGPT. Данные отображённых страниц, а не подтверждённая полная история аккаунта. Нажмите для настройки.';
+      item.tooltip = `Подключение через браузер, где вы вошли в ChatGPT. Данные отображённых страниц, а не подтверждённая полная история аккаунта. Нажмите для настройки.\n${this.onlineStatusDetail || ''}`;
       item.command = { command: `${PREFIX}.connectOnline`, title: 'Подключить онлайн ChatGPT' }; return item;
     }
     if (element.kind === 'skills' || element.kind === 'skillScope') {
@@ -95,19 +95,19 @@ class ProjectsTree {
     }
     if (element.kind === 'skillNote') { const item = new vscode.TreeItem(element.label); item.iconPath = new vscode.ThemeIcon('info'); return item; }
     if (element.kind === 'section') {
-      const item = new vscode.TreeItem(LABELS[this.section] + ' ▾'); item.id = 'codexProjects:section'; item.iconPath = new vscode.ThemeIcon(this.section === 'chatgpt' ? 'comment-discussion' : 'hubot');
+      const item = new vscode.TreeItem((this.includeArchived ? 'Архив Codex' : LABELS[this.section]) + ' ▾'); item.id = 'codexProjects:section'; item.iconPath = new vscode.ThemeIcon(this.includeArchived ? 'archive' : this.section === 'chatgpt' ? 'comment-discussion' : 'hubot');
       item.command = { command: `${PREFIX}.switchSection`, title: 'Переключить Codex / ChatGPT' }; item.tooltip = 'Нажмите, чтобы переключить раздел. Истории Codex и ChatGPT показываются раздельно.'; return item;
     }
     if (element.kind === 'unassigned') {
       const groups = this.groups.filter(secondaryGroup);
       const item = new vscode.TreeItem('Отдельные чаты', vscode.TreeItemCollapsibleState.Collapsed);
-      item.id = 'codexProjects:unassigned'; item.iconPath = new vscode.ThemeIcon('folder-library');
+      item.id = 'codexProjects:unassigned'; item.iconPath = new vscode.ThemeIcon(groups.some(g=>g.threads.some(t=>t.running)) ? 'loading~spin' : 'folder-library');
       item.description = `${groups.reduce((n, g) => n + g.threads.length, 0)} чатов`;
       item.tooltip = 'Чаты из автоматически созданных рабочих папок показаны прямо списком, без промежуточных new-chat. Явные проекты сохраняются отдельно.';
       return item;
     }
     if (element.kind === 'empty') {
-      const item = new vscode.TreeItem(this.loading ? 'Загружаю локальные чаты…' : `В выбранном хранилище нет загруженных записей: ${LABELS[this.section]}`);
+      const item = new vscode.TreeItem(this.loading ? 'Загружаю локальные чаты…' : this.includeArchived ? 'Архив Codex пуст' : `В выбранном хранилище нет загруженных записей: ${LABELS[this.section]}`);
       item.iconPath = new vscode.ThemeIcon(this.loading ? 'loading~spin' : 'info');
       item.command = { command: `${PREFIX}.diagnostics`, title: 'Диагностика' }; return item;
     }
@@ -146,9 +146,11 @@ class Controller {
     this.onlineBridge = new OnlineBridge(snapshot => { this.online.ingest(snapshot); this.rebuildTree(); this.updateOnlineStatus(); }, {onPair:async credentials=>{
       if(!this.context.secrets)throw new Error('Secret storage unavailable');
       await this.context.secrets.store('onlineBrowserPairing',JSON.stringify(credentials)); this.updateOnlineStatus();
-    }});
+    },onScanStatus:status=>{this.online.scanStatus(status);this.rebuildTree();this.updateOnlineStatus();}});
     this.skillCache = new Map(); this.tree.skillsProvider = group => this.projectSkills(group);
-    if (!LABELS[this.section]) this.section = 'codex'; this.tree.section = this.section;
+    if (!LABELS[this.section]) this.section = 'codex';
+    if (this.section !== 'codex') this.includeArchived = false;
+    this.tree.section = this.section; this.tree.includeArchived = this.includeArchived;
     this.diagnostics = { status: 'Данные ещё не загружены.' }; this.disposed = false; this.lastLoad = 0;
     this.output = vscode.window.createOutputChannel('Codex Projects Explorer');
     this.view = vscode.window.createTreeView('codexProjects.tree', { treeDataProvider: this.tree, showCollapseAll: true, dragAndDropController: this });
@@ -170,7 +172,8 @@ class Controller {
     bind('openOnlineInBrowser', item => this.openOnlineInBrowser(item?.thread || item?.group || item));
     if(vscode.window.registerUriHandler)this.context.subscriptions.push(vscode.window.registerUriHandler({handleUri:uri=>{if(uri.path==='/online')this.connectOnline(false).catch(e=>vscode.window.showErrorMessage(e.message));}}));
     bind('toggleArchived', async () => {
-      this.includeArchived = !this.includeArchived;
+      this.includeArchived = this.section !== 'codex' || !this.includeArchived; this.section = 'codex';
+      await this.context.globalState.update('section', this.section);
       await this.context.globalState.update('includeArchived', this.includeArchived);
       await this.refresh();
     });
@@ -181,6 +184,7 @@ class Controller {
     bind('switchSection', () => this.switchSection()); bind('assignSection', item => this.assignSection(item?.thread || item));
     bind('pinChat', item => this.pinChat(item?.thread || item, true)); bind('unpinChat', item => this.pinChat(item?.thread || item, false));
     bind('archiveChat', item => this.archiveChat(item?.thread || item, true)); bind('unarchiveChat', item => this.archiveChat(item?.thread || item, false));
+    bind('deleteArchivedChat', item => this.deleteArchivedChat(item?.thread || item));
     bind('createProject', () => this.createProject()); bind('newChat', item => this.newChat(item?.group || item));
     bind('moveChatUp', item => this.moveChat(item?.thread || item, -1)); bind('moveChatDown', item => this.moveChat(item?.thread || item, 1));
     bind('openSkill', skill => this.openSkill(skill));
@@ -214,7 +218,7 @@ class Controller {
     catch (e) { executableError = e.message; }
     this.backend = new Backend({ home: codexHome(c.get('codexHome', '')), executable,
       dataSource: c.get('dataSource', 'auto'), stateFile: expand(c.get('projectStateFile', '')),
-      showSubagents: c.get('showSubagents', false) });
+      showSubagents: c.get('showSubagents', false), cacheState: this.context.globalState });
     this.executableError = executableError;
   }
   async refresh() {
@@ -226,7 +230,13 @@ class Controller {
       this.tree.loading = true; this.tree.refresh();
       try {
         await this.ensureBackend();
-        const result = await this.backend.load(this.includeArchived, { signal: abort.signal, onProgress: message => progress.report({ message }) });
+        const result = await this.backend.load(this.includeArchived, { signal: abort.signal, onProgress: message => progress.report({ message }), onCached: cached => {
+          if (abort.signal.aborted || this.disposed) return;
+          this.threads = cached.threads.map(t=>({...t,standalone:!!this.standaloneThreads[threadKey(t)]}));
+          for (const thread of this.threads) this.updateChatTitle(thread);
+          this.projectSources = { desktop: cached.projects, folders: (vscode.workspace.workspaceFolders || []).filter(f=>f.uri.scheme==='file').map(f=>({name:f.name,path:f.uri.fsPath})) };
+          this.rebuildTree();
+        } });
         if (abort.signal.aborted || this.disposed) return;
         const folders = (vscode.workspace.workspaceFolders || []).filter(f => f.uri.scheme === 'file').map(f => ({ name: f.name, path: f.uri.fsPath }));
         this.threads = result.threads.map(t=>({...t,standalone:!!this.standaloneThreads[threadKey(t)]}));
@@ -319,16 +329,19 @@ class Controller {
     this.files ||= new ProjectFiles(vscode);
     await this.files.show(group);
   }
-  visibleThreads() { return this.threads.filter(t => classifyThread(t, this.overrides).section === this.section); }
+  visibleThreads() { return this.threads.filter(t => classifyThread(t, this.overrides).section === this.section && !!t.archived === !!this.includeArchived); }
   rebuildTree() {
     this.tree.section = this.section;
+    this.tree.includeArchived = this.includeArchived;
     this.onlineConnected = this.onlineBridge.connected;
     this.tree.onlineGroups = this.online.groups();
-    this.tree.onlineStatus = this.online.lastSync ? `${this.onlineBridge.connected ? 'Браузер подключён' : 'Снимок браузера'} · ${this.online.chats.size} загруженных чатов · часть истории` : this.onlineBridge.connected ? 'Браузер подключён · ожидаю данные страниц' : 'Подключить онлайн ChatGPT…';
+    this.tree.onlineStatusDetail=this.online.scan.note;
+    this.tree.onlineStatus = this.online.lastSync ? `${this.onlineBridge.connected ? 'Браузер подключён' : 'Снимок браузера'} · проектов: ${this.online.projects.size} · чатов: ${this.online.chats.size}${this.online.scan.state==='loading'?' · загрузка проектов…':this.online.scan.state==='failed'?' · сбор остановлен':''} · часть истории` : this.onlineBridge.connected ? 'Браузер подключён · ожидаю данные страниц' : 'Подключить онлайн ChatGPT…';
     const selected = this.visibleThreads().map(t => { const activity = this.chatActivity(t.id); return { ...t, pinned: !!this.pins[threadKey(t)], running: activity.running, activityLabel: activity.label, sectionReason: classifyThread(t, this.overrides).reason }; });
     const projects = this.config().get('projects', []).filter(p => (p.section || 'codex') === this.section);
     const desktop = (this.projectSources?.desktop || []).filter(p => !p.metadata?.['codexProjects.section'] || p.metadata['codexProjects.section'] === this.section);
     this.tree.groups = groupThreads(selected, desktop, projects, this.projectSources?.folders || []);
+    if (this.includeArchived) this.tree.groups = this.tree.groups.filter(g => g.threads.length);
     if (this.section !== 'codex') this.tree.groups = this.tree.groups.filter(g => g.threads.length || g.metadata?.['codexProjects.section'] === this.section || projects.some(p => p.paths.some(r => g.paths.includes(r))));
     let changed = false;
     const apply = (bucket, threads) => {
@@ -353,13 +366,19 @@ class Controller {
     const unknown = this.threads.filter(t => classifyThread(t, this.overrides).section === 'unknown').length;
     const count = this.visibleThreads().length;
     this.view.message = this.section === 'chatgpt'
-      ? `${this.online.lastSync ? `Онлайн-снимки: ${this.online.chats.size} · часть истории` : 'Онлайн-история не загружена'}${count ? ` · локальных записей: ${count}` : ''}`
-      : `${LABELS[this.section]} · ${count} локальных чатов${this.includeArchived ? ' · с архивом' : ''}${unknown && this.section !== 'unknown' ? ` · источник не определён: ${unknown}` : ''}`;
+      ? `${this.online.lastSync ? `Онлайн: проектов ${this.online.projects.size}, чатов ${this.online.chats.size} · ${this.online.scan.state==='loading'?'загрузка…':'часть истории'}` : 'Онлайн-история не загружена'}${count ? ` · локальных записей: ${count}` : ''}`
+      : `${this.includeArchived ? 'Архив Codex' : LABELS[this.section]} · ${count} ${this.includeArchived ? 'архивных' : 'локальных'} чатов${unknown && this.section !== 'unknown' ? ` · источник не определён: ${unknown}` : ''}`;
   }
   async switchSection() {
     const items = ['codex','chatgpt','unknown'].map(section => ({ label: `${this.section === section ? '✓ ' : ''}${LABELS[section]}`, description: section === 'chatgpt' ? this.online.lastSync ? `Из браузера: ${this.online.chats.size} · часть истории` : 'Доступно подключение через браузер' : `${this.threads.filter(t => classifyThread(t, this.overrides).section === section).length} локальных чатов`, detail: section === 'unknown' ? 'Старые записи без признака приложения. Правой кнопкой можно выбрать раздел.' : section === 'chatgpt' ? 'Онлайн-снимки браузера и распознанные локальные записи показаны отдельно. Полнота аккаунта не подтверждена.' : 'Проекты и чаты из выбранного локального хранилища Codex', section }));
+    if (this.includeArchived) for (const item of items) item.label = item.label.replace(/^✓ /, '');
+    items.splice(1, 0, { label: `${this.includeArchived ? '✓ ' : ''}Архив Codex`, section: 'codex', archived: true, detail: 'Архивные чаты по проектам: просмотр, восстановление и удаление навсегда.' });
     const chosen = await vscode.window.showQuickPick(items, { placeHolder: 'Codex / ChatGPT — выбрать раздел' });
-    if (!chosen) return; this.section = chosen.section; await this.context.globalState.update('section', this.section); this.rebuildTree();
+    if (!chosen) return;
+    const reload = this.includeArchived !== !!chosen.archived;
+    this.section = chosen.section; this.includeArchived = !!chosen.archived;
+    await this.context.globalState.update('section', this.section); await this.context.globalState.update('includeArchived', this.includeArchived);
+    if (reload) await this.refresh(); else this.rebuildTree();
   }
   async assignSection(thread) {
     if (!validId(thread?.id)) throw new Error('Выберите чат.');
@@ -381,6 +400,24 @@ class Controller {
     await this.ensureBackend(); const rpc = await this.backend.connect();
     await rpc.request(archived ? 'thread/archive' : 'thread/unarchive', { threadId: thread.id });
     this.panels.get(thread.id)?.dispose(); await this.refresh();
+  }
+  async deleteArchivedChat(thread) {
+    if (!validId(thread?.id) || !thread.archived || thread.provider === 'chatgpt-browser') throw new Error('Выберите архивный чат Codex.');
+    if (this.sessions.get(thread.id)?.running || this.chatActivity(thread.id).running) throw new Error('Нельзя удалить работающий чат.');
+    const choice = await vscode.window.showWarningMessage(`Удалить навсегда чат «${chatTitle(thread)}»?`, { modal: true,
+      detail: 'История и связанные дочерние чаты будут удалены без возможности восстановления. Файлы проекта сохранятся.' }, 'Удалить навсегда');
+    if (choice !== 'Удалить навсегда') return;
+    if (this.sessions.get(thread.id)?.running || this.chatActivity(thread.id).running) throw new Error('Нельзя удалить работающий чат.');
+    await this.ensureBackend(); while (this.refreshPromise) await this.refreshPromise;
+    await this.sessions.get(thread.id)?.release();
+    const result = await this.backend.deleteArchivedThread(thread);
+    this.panels.get(thread.id)?.dispose(); this.threads = this.threads.filter(t => t.id !== thread.id);
+    const clipboard = path.resolve(this.context.globalStorageUri.fsPath, 'clipboard'), directory = path.resolve(clipboard, thread.id);
+    if (path.dirname(directory) !== clipboard) throw new Error('Неверный путь хранилища вложений.');
+    try { await fsp.rm(directory, { recursive: true, force: true }); }
+    catch { await vscode.window.showWarningMessage('Чат удалён, но копии вставленных вложений удалить не удалось.'); }
+    if (result?.warning) await vscode.window.showWarningMessage(result.warning);
+    await this.refresh();
   }
   async createProject() {
     if (this.section === 'chatgpt') throw new Error('Создание проектов в аккаунте ChatGPT не подключено. Для создания проекта Codex выберите раздел Codex.');
@@ -438,7 +475,7 @@ class Controller {
     this.overrides={...this.overrides,[threadKey(thread)]:'codex'};await this.context.globalState.update('threadSections',this.overrides);
     this.section='codex';await this.context.globalState.update('section',this.section);this.threads.push(thread);this.rebuildTree();await this.openChat(thread);
   }
-  orderKey(bucket) { return `${this.backend?.options?.home || this.config().get('codexHome', '')}:${this.section}:${bucket}`; }
+  orderKey(bucket, archived = this.includeArchived) { return `${this.backend?.options?.home || this.config().get('codexHome', '')}:${this.section}:${archived ? 'archive:' : ''}${bucket}`; }
   async projectSkills(group) {
     if (!group.paths.length) return [{ kind: 'skillNote', label: 'У проекта пока нет рабочей папки' }];
     await this.ensureBackend();
@@ -589,9 +626,9 @@ class Controller {
       this.chatOrder = { ...this.chatOrder, [key]: moveBefore(this.chatOrder[key] || [], data.key, targetKey) }; await this.saveOrder(); this.rebuildTree();
     } catch (e) { vscode.window.showErrorMessage(e.message); }
   }
-  categorySettings(group) { return categories.settingsFor(this.projectCategories, this.orderKey(group.id)); }
+  categorySettings(group) { return categories.settingsFor(this.projectCategories, this.orderKey(group.id, false)); }
   async saveCategories(group, update) {
-    const key = this.orderKey(group.id);
+    const key = this.orderKey(group.id, false);
     this.categoryWrite = (this.categoryWrite || Promise.resolve()).catch(() => {}).then(async () => {
       const settings = update(categories.settingsFor(this.projectCategories, key)), next = { ...this.projectCategories, [key]: settings };
       await this.context.globalState.update('projectCategories', next); this.projectCategories = next; this.rebuildTree();
@@ -718,23 +755,32 @@ class Controller {
   }
   async connectOnline(openBrowser = false) {
     await this.onlineInit;
-    this.online.clear();
-    for (const panel of this.onlinePanels.values()) panel.dispose(); this.onlinePanels.clear();
-    this.onlineCode = await this.onlineBridge.start();
+    if (!this.onlineBridge.server || (!this.onlineBridge.peer && (!this.onlineBridge.pending || this.onlineBridge.pending.expires<Date.now()))) this.onlineCode = await this.onlineBridge.start();
     this.rebuildTree();
-    if (this.onlineSetup) { this.onlineSetup.reveal(); this.updateOnlineStatus(); if(openBrowser)await vscode.env.openExternal(vscode.Uri.parse(this.onlineBridge.launchUrl())); return; }
+    if (this.onlineSetup) { this.onlineSetup.reveal(); this.updateOnlineStatus(); if(openBrowser)await this.launchOnlineBrowser(); return; }
     const panel = vscode.window.createWebviewPanel('codexProjects.onlineSetup', 'Подключить онлайн ChatGPT', vscode.ViewColumn.One, { enableScripts: true });
     this.onlineSetup = panel; panel.webview.html = renderSetup();
     panel.webview.onDidReceiveMessage(async m => {
       try {
+        if (m.action === 'ready') this.updateOnlineStatus();
         if (m.action === 'copy') { if(!this.onlineBridge.pending || this.onlineBridge.pending.expires<Date.now())throw new Error('Создайте новое подключение командой «Подключить онлайн ChatGPT»'); await vscode.env.clipboard.writeText(this.onlineCode); panel.webview.postMessage({type:'status',text:'Резервный код скопирован. Действует 5 минут.'}); }
-        if (m.action === 'launch') { if(!this.onlineBridge.pending || this.onlineBridge.pending.expires<Date.now())this.onlineCode=await this.onlineBridge.start();await vscode.env.openExternal(vscode.Uri.parse(this.onlineBridge.launchUrl())); }
+        if (m.action === 'launch') await this.launchOnlineBrowser();
+        if (m.action === 'scan') { const result=await this.onlineBridge.execute('scan');if(result.state==='failed')this.online.scanStatus({state:'failed',note:result.note});this.rebuildTree();this.updateOnlineStatus(); }
         if (m.action === 'folder') { const folder=await this.browserComponentFolder();await vscode.env.clipboard.writeText(folder);await vscode.commands.executeCommand('revealFileInOS',vscode.Uri.file(path.join(folder,'manifest.json')));panel.webview.postMessage({type:'status',text:'Путь к папке скопирован. В браузере нажмите «Загрузить распакованное расширение» и вставьте этот путь.'}); }
         if (m.action === 'disconnect') this.disconnectOnline();
       } catch(e) { vscode.window.showErrorMessage(e.message); }
     });
     panel.onDidDispose(() => { this.onlineSetup = null; });
-    if(openBrowser)await vscode.env.openExternal(vscode.Uri.parse(this.onlineBridge.launchUrl()));
+    this.updateOnlineStatus();
+    if(openBrowser)await this.launchOnlineBrowser();
+  }
+  async launchOnlineBrowser() {
+    if(this.onlineBridge.connected) { await vscode.env.openExternal(vscode.Uri.parse('https://chatgpt.com/'));return; }
+    if(!this.onlineBridge.pending || this.onlineBridge.pending.expires<Date.now()) {
+      this.online.clear();for(const panel of this.onlinePanels.values())panel.dispose();this.onlinePanels.clear();
+      this.onlineCode=await this.onlineBridge.start();this.rebuildTree();
+    }
+    await vscode.env.openExternal(vscode.Uri.parse(this.onlineBridge.launchUrl()));
   }
   disconnectOnline() {
     this.onlineBridge.dispose(); this.online.clear(); this.onlineCode = '';
@@ -743,9 +789,9 @@ class Controller {
     this.rebuildTree(); this.updateOnlineStatus();
   }
   updateOnlineStatus() {
-    this.onlineSetup?.webview.postMessage({type:'status',text: this.onlineBridge.connected ? `Подключено автоматически. Проектов: ${this.online.projects.size}; чатов: ${this.online.chats.size}. Полнота истории не подтверждена.` : this.onlineBridge.pending ? 'Ожидаю браузер. Если компонент уже установлен, подключение произойдёт автоматически.' : 'Браузер недоступен. Если подключение сохранено, оно восстановится автоматически.'});
+    this.onlineSetup?.webview.postMessage({type:'status',text: this.onlineBridge.connected ? `Браузер подключён. Проектов: ${this.online.projects.size}; чатов: ${this.online.chats.size}. ${this.online.scan.note}` : this.onlineBridge.pending ? 'Ожидаю браузер. Если компонент уже установлен, подключение произойдёт автоматически.' : 'Браузер недоступен. Если подключение сохранено, оно восстановится автоматически.'});
     for (const [id, panel] of this.onlinePanels) { const c = this.online.chats.get(id), history = this.online.conversations.get(id);
-      const revision = `${!!history}:` + JSON.stringify(history?.messages || []); if(c && panel.onlineRevision !== revision) { panel.onlineRevision = revision; panel.webview.html = renderOnline({name:c.title}, history); } }
+      const revision = `${!!history}:` + JSON.stringify(history?.messages || []); if(c && panel.onlineRevision !== revision) { panel.onlineRevision = revision; panel.title=c.title;panel.webview.postMessage({type:'history',history}); } }
   }
   async openOnlineInBrowser(value) {
     const {route} = require('../browser-bridge/reader'); const r = route(value?.url);
@@ -757,8 +803,17 @@ class Controller {
     const panel = vscode.window.createWebviewPanel('codexProjects.onlineChat', thread.name, vscode.ViewColumn.One, {enableScripts:true});
     this.onlinePanels.set(thread.onlineId, panel); panel.onlineRevision = `${!!this.online.conversations.get(thread.onlineId)}:` + JSON.stringify(this.online.conversations.get(thread.onlineId)?.messages || []); panel.webview.html = renderOnline(thread, this.online.conversations.get(thread.onlineId));
     panel.webview.onDidReceiveMessage(async m => {
-      if(m.action === 'open') await this.openOnlineInBrowser(thread);
-      if(m.action === 'refresh') panel.webview.html = renderOnline(thread, this.online.conversations.get(thread.onlineId));
+      try {
+        if(m.action === 'open') await this.openOnlineInBrowser(thread);
+        if(m.action === 'refresh') panel.webview.postMessage({type:'history',history:this.online.conversations.get(thread.onlineId)});
+        if(m.action === 'reviewed' && this.onlineBridge.acknowledge(thread.url)) panel.webview.postMessage({type:'sendResult',state:'failed',note:'Проверка исходного чата подтверждена вами. Можно написать новое сообщение.'});
+        if(m.action === 'send') {
+          if(panel.onlineSending)return;
+          panel.onlineSending=true;
+          try { const result=await this.onlineBridge.execute('send',{url:thread.url,text:m.text});panel.webview.postMessage({type:'sendResult',...result,text:m.text}); }
+          finally {panel.onlineSending=false;}
+        }
+      }catch(e){panel.webview.postMessage({type:'sendResult',state:'failed',note:e.message});}
     });
     panel.onDidDispose(() => this.onlinePanels.delete(thread.onlineId));
   }

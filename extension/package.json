@@ -2,7 +2,7 @@
   "name": "codex-projects-explorer",
   "displayName": "Codex Projects Explorer",
   "description": "Проекты Codex и полноценный чат в центральной вкладке: модели, размышления, потоковые ответы и вложения.",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "publisher": "damir-tools",
   "license": "MIT",
   "engines": {
@@ -71,7 +71,7 @@
       },
       {
         "command": "codexProjects.toggleArchived",
-        "title": "Показать / скрыть архивные чаты",
+        "title": "Открыть / закрыть архив Codex",
         "category": "Codex Projects",
         "icon": "$(archive)"
       },
@@ -156,6 +156,12 @@
         "title": "Восстановить чат из архива",
         "category": "Codex Projects",
         "icon": "$(discard)"
+      },
+      {
+        "command": "codexProjects.deleteArchivedChat",
+        "title": "Удалить архивный чат навсегда…",
+        "category": "Codex Projects",
+        "icon": "$(trash)"
       },
       {
         "command": "codexProjects.createProject",
@@ -366,6 +372,11 @@
         },
         {
           "command": "codexProjects.unarchiveChat",
+          "when": "view == codexProjects.tree && viewItem =~ /^codexChat:archived:/",
+          "group": "manage@2"
+        },
+        {
+          "command": "codexProjects.deleteArchivedChat",
           "when": "view == codexProjects.tree && viewItem =~ /^codexChat:archived:/",
           "group": "manage@2"
         },
