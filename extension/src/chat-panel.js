@@ -37,6 +37,7 @@ function createChatPanel(vscode, controller, thread) {
   async function bootstrap() {
     if (booting || session.running) return; booting = true;
     try {
+      panel.title = chatTitle(thread); post({ type: 'title', title: panel.title });
       const results = await Promise.allSettled([controller.backend.history(thread), session.prepare()]);
       if (results[0].status === 'fulfilled') { for(const item of results[0].value.tools||[])rememberPatch(item);post({ type: 'history', history: await media.history(results[0].value) }); await session.synchronize(); }
       else fail(results[0].reason);

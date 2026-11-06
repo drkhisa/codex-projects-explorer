@@ -230,6 +230,7 @@ class Controller {
         if (abort.signal.aborted || this.disposed) return;
         const folders = (vscode.workspace.workspaceFolders || []).filter(f => f.uri.scheme === 'file').map(f => ({ name: f.name, path: f.uri.fsPath }));
         this.threads = result.threads.map(t=>({...t,standalone:!!this.standaloneThreads[threadKey(t)]}));
+        for (const thread of this.threads) this.updateChatTitle(thread);
         this.attachActivityRpc(this.backend?.rpc);
         this.runtimeStates = new Map(result.threads.map(t => [t.id, runtimeActivity(t.status)]).filter(([,s]) => s));
         this.reportedActive = new Set(result.threads.filter(t => t.status?.type === 'active').map(t => t.id));
@@ -265,14 +266,21 @@ class Controller {
     const item = await vscode.window.showQuickPick(items, { placeHolder: `Поиск по ${items.length} чатам раздела ${LABELS[this.section]}`, matchOnDescription: true, matchOnDetail: true });
     if (item) await this.openChat(item.thread);
   }
+  updateChatTitle(thread) {
+    const session = this.sessions.get(thread.id), panel = this.panels.get(thread.id);
+    if (!session || !panel) return;
+    Object.assign(session.thread, { name: thread.name || '', preview: thread.preview || '' });
+    const title = chatTitle(session.thread);
+    if (panel.title !== title) { panel.title = title; panel.webview.postMessage({ type: 'title', title }); }
+  }
   async openChat(thread) {
     if (thread?.provider === 'chatgpt-browser') return this.openOnlineChat(thread);
     if (!thread || !validId(thread.id)) throw new Error('Выберите чат в дереве проектов.');
     let panel = this.panels.get(thread.id);
-    if (panel) { panel.reveal(); return; }
+    if (panel) { this.updateChatTitle(thread); panel.reveal(); return; }
     await this.ensureBackend();
     panel = this.panels.get(thread.id);
-    if (panel) { panel.reveal(); return; }
+    if (panel) { this.updateChatTitle(thread); panel.reveal(); return; }
     createChatPanel(vscode, this, thread);
   }
   async resume(thread) {
@@ -508,6 +516,13 @@ class Controller {
     this.activityRpc = rpc;
     this.activityNotify = ({method,params:p}) => {
       if (this.disposed || !p?.threadId) return;
+      if (method === 'thread/name/updated') {
+        const thread = this.threads.find(t => t.id === p.threadId) || this.sessions.get(p.threadId)?.thread;
+        if (thread && (typeof p.threadName === 'string' || p.threadName === null)) {
+          thread.name = p.threadName || ''; this.updateChatTitle(thread); this.rebuildTree();
+        }
+        return;
+      }
       let state;
       if (method === 'thread/status/changed') state = runtimeActivity(p.status);
       else if (method === 'turn/started') { state = runtimeActivity({type:'active'}); this.localEnds.delete(p.threadId); }

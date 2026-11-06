@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Codex Projects — ChatGPT Browser Bridge",
   "description": "Передаёт отображённые проекты, списки чатов и текст выбранной переписки из ChatGPT в локальный VS Code по вашему подключению.",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "permissions": [
     "storage",
     "activeTab",

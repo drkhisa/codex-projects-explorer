@@ -145,7 +145,7 @@ test('concurrent opens create one panel and reveal the existing one', async t =>
   let Controller;
   try { ({ Controller } = require(extensionFile)); }
   finally { t.mock.restoreAll(); delete require.cache[extensionFile]; }
-  const controller = { panels, ensureBackend: () => connected };
+  const controller = { panels, ensureBackend: () => connected, updateChatTitle() {} };
   const opens = [Controller.prototype.openChat.call(controller, thread), Controller.prototype.openChat.call(controller, thread)];
   ready();
   await Promise.all(opens);

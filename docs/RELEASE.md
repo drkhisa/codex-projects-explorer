@@ -6,7 +6,8 @@
 - **MINOR** — новые возможности, например категории, браузерное подключение или просмотр изменений.
 - **PATCH** — исправления существующих функций, например группировки, порядка дерева или подключения.
 
-Исправление жизненного цикла чата после 0.5.2 выпускается как **0.5.3**.
+Текущий выпуск **0.5.4** исправляет обновление названия открытого чата.
+Это PATCH после 0.5.3, где был исправлен жизненный цикл чата.
 Версии в `extension/package.json`, браузерном manifest, VSIX manifest и
 `installers/Windows/installer.json` должны совпадать.
 
@@ -24,7 +25,7 @@ GitHub (About) должно отражать актуальное назначе
 
 ```powershell
 rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy node scripts/verify.mjs'
-rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy node --test scripts/chat-lifecycle.test.cjs'
+rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy node --test scripts/chat-lifecycle.test.cjs scripts/chat-title.test.cjs'
 rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk proxy python scripts/build-release.py'
 ```
 
@@ -50,7 +51,15 @@ rtk proxy powershell -NoProfile -Command '. .\scripts\Enter-Project.ps1; rtk pro
 Структура, синтаксис, синтетические регрессионные тесты и проверки упаковки
 не заменяют запуск в VS Code Extension Host, настоящий Codex App Server,
 Windows GUI, Mac или браузер. Установщики и сопряжение не запускаются при сборке.
-Полная онлайн-история и отправка из VS Code остаются нереализованными.
+Полная онлайн-история и отправка в онлайн ChatGPT из VS Code остаются нереализованными.
+
+В 0.5.4 проходят 15 синтетических тестов (9 на жизненный цикл, 6 на название)
+и общая проверка, включая синтаксис 31 JS-файла. В чате разработки на
+Codex Desktop/0.164.0-alpha.11.1 с изолированными home/cwd подтверждено:
+`thread/name/set` выдаёт `thread/name/updated` с `threadId` и `threadName`,
+а `thread/read` возвращает соответствующее имя. Реальная история не читалась,
+модель не запускалась. VS Code Extension Host, установщики, macOS, браузер
+и сопряжение не проверялись. Готовый выпуск `builds/0.5.3/` не изменяется.
 
 Перед выпуском записать фактически выполненные проверки и ограничения в
 `packaging/СНАЧАЛА ПРОЧИТАЙ.txt`; не переносить старые утверждения о тестах.

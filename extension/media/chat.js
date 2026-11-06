@@ -219,7 +219,8 @@
   history.addEventListener('click', e => { const asset = e.target.closest('[data-asset]'); if (asset) { const item = state.assets.get(asset.dataset.asset); if (item?.available) showAsset(item); return; } const link = e.target.closest('a'); if (link) { e.preventDefault(); post('openLink', { url: link.getAttribute('href') }); } });
   window.addEventListener('message', event => {
     const m = event.data;
-    if (m.type === 'history') { history.replaceChildren(); state.messages.clear(); state.tools.clear(); state.requests.clear(); state.assets.clear(); state.lastAssistant = ''; state.lastAssistantId = null;
+    if (m.type === 'title') { document.title = m.title; $('chat-title').textContent = m.title; }
+    else if (m.type === 'history') { history.replaceChildren(); state.messages.clear(); state.tools.clear(); state.requests.clear(); state.assets.clear(); state.lastAssistant = ''; state.lastAssistantId = null;
       if (Array.isArray(m.history.timeline)) {
         for (const item of m.history.timeline) { if (item.kind === 'message') message(item.role, item.text, item.id, item.attachments); else if (item.kind === 'tool') tool(item); }
       } else {
