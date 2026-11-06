@@ -271,6 +271,8 @@ class Controller {
     let panel = this.panels.get(thread.id);
     if (panel) { panel.reveal(); return; }
     await this.ensureBackend();
+    panel = this.panels.get(thread.id);
+    if (panel) { panel.reveal(); return; }
     createChatPanel(vscode, this, thread);
   }
   async resume(thread) {

@@ -115,6 +115,8 @@ class Backend {
         let turns;
         try { turns = await collectPages(rpc, 'thread/turns/list', { threadId: thread.id, limit: 50, sortDirection: 'asc', itemsView: 'full' }); }
         catch (e) {
+          // A newly started thread has no persisted turns until its first message.
+          if (!thread.file && /not materialized yet.*unavailable before first user message/i.test(e.message)) return normalizeTurns([]);
           if (!unsupported(e)) throw e;
           const result = await rpc.request('thread/read', { threadId: thread.id, includeTurns: true });
           if (!Array.isArray(result?.thread?.turns)) throw new Error('Сервер не вернул историю.');

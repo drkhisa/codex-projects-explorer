@@ -56,11 +56,16 @@ class ChatSession extends EventEmitter {
         const params = { threadId: this.thread.id, model, sandbox: permissions.sandbox, approvalPolicy: 'on-request', approvalsReviewer: 'user', excludeTurns: true,
           ...(this.thread.cwd ? { cwd: this.thread.cwd } : {}) };
         let result;
-        try { result = await this.rpc.request('thread/resume', params, 120000); }
-        catch (e) {
-          if (e.code !== -32602) throw e;
-          delete params.excludeTurns; delete params.approvalsReviewer;
-          result = await this.rpc.request('thread/resume', params, 120000);
+        // Reuse this server's live thread, including new threads without a rollout.
+        if ((await collectPages(this.rpc, 'thread/loaded/list')).includes(this.thread.id)) {
+          result = await this.rpc.request('thread/read', { threadId: this.thread.id, includeTurns: false });
+        } else {
+          try { result = await this.rpc.request('thread/resume', params, 120000); }
+          catch (e) {
+            if (e.code !== -32602) throw e;
+            delete params.excludeTurns; delete params.approvalsReviewer;
+            result = await this.rpc.request('thread/resume', params, 120000);
+          }
         }
         if (result.thread?.status?.type === 'active') throw new Error('Этот чат уже выполняется в другом клиенте Codex. Дождитесь завершения.');
         this.resumed = true;
@@ -69,7 +74,7 @@ class ChatSession extends EventEmitter {
       const input = [...(text.trim() ? [{ type: 'text', text }] : []), ...extraInputs];
       startingTurn = true;
       const result = await this.rpc.request('turn/start', { threadId: this.thread.id, input, model,
-        ...(effort ? { effort } : {}), approvalPolicy: 'on-request', sandboxPolicy: permissions.policy(this.thread.cwd) }, 120000);
+        ...(effort ? { effort } : {}), approvalPolicy: 'on-request', approvalsReviewer: 'user', sandboxPolicy: permissions.policy(this.thread.cwd) }, 120000);
       if (this.running) this.turnId = result.turn?.id || this.turnId;
       this.emit('update', { type: 'sent' }); this.state();
       if (this.stopRequested && this.running) await this.stop();
